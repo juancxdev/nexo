@@ -100,6 +100,24 @@ La consolidación hacia la BD única todavía no está implementada: Core usa `n
 
 ## Contratos y cambios compatibles
 
+### Convención de CI para microservicios
+
+El workflow publica un único check requerido llamado `microservices-quality`.
+El script `.github/scripts/test-microservices.sh` descubre cada
+`microservices/<service-id>/go.mod` y valida todos los servicios encontrados.
+
+- Si el servicio tiene un target `test` en su `Makefile`, la CI ejecuta `make test`.
+- Si no tiene `Makefile` o target `test`, ejecuta `go test ./...` directamente.
+- En ambos casos ejecuta `go vet ./...`.
+- Si el servicio tiene `docker-compose.yml` o `compose.yml`, puede levantar recursos efímeros durante sus pruebas y debe poder limpiarlos con `docker compose down -v`.
+- El servicio no debe depender de otro microservicio ni de una base de datos compartida para pasar este check.
+- Agregar un nuevo microservicio Go no requiere modificar el workflow: basta con cumplir la estructura y esta convención.
+
+Las pruebas de integración deben ser deterministas, aisladas y capaces de ejecutarse en
+un runner Ubuntu de GitHub Actions con Docker disponible. Los nombres individuales de
+los servicios no se agregan como required checks de las ramas; el resultado agregado
+`microservices-quality` es el gate obligatorio.
+
 1. Añadir campos opcionales es compatible.
 2. Renombrar/eliminar campos, cambiar tipos, rutas o semántica exige una versión nueva (`/v2`) o fase de deprecación acordada.
 3. Un productor publica primero el contrato y pruebas; un consumidor se adapta después. No se fusionan cambios incompatibles simultáneos.

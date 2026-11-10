@@ -63,15 +63,12 @@ jobs:
       - run: go test ./...
       - run: go vet ./...
 
-  onsite-operations:
+  microservices-quality:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: microservices/onsite-operations
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version-file: microservices/onsite-operations/go.mod
-      - run: make test
-      - run: go vet ./...
+          go-version: stable
+      - name: Validate all Go microservices
+        run: bash .github/scripts/test-microservices.sh

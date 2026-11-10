@@ -12,7 +12,7 @@
 
 - [ ] `npm run tokens:validate`, `npm run build`, `npm run test`.
 - [ ] E2E transversal, si aplica.
-- [ ] `go test ./...` y `go vet ./...` en los servicios modificados.
+- [ ] `go test ./...` y `go vet ./...` en los servicios modificados; la CI ejecutará el check agregado `microservices-quality`.
 - [ ] Migraciones/seed probados, si aplica.
 
 ## Fixtures y ownership
