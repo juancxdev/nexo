@@ -37,10 +37,17 @@ func (r *Router) trace(c fiber.Ctx) string {
 		id = uuid.NewString()
 	}
 	c.Set("X-Request-Id", id)
+	c.Locals("trace_id", id)
 	return id
 }
+func traceID(c fiber.Ctx) string {
+	if id, ok := c.Locals("trace_id").(string); ok && id != "" {
+		return id
+	}
+	return c.Get("X-Request-Id")
+}
 func problem(c fiber.Ctx, status int, code, detail string) error {
-	id := c.Get("X-Request-Id")
+	id := traceID(c)
 	return c.Status(status).Type("application/problem+json").JSON(fiber.Map{"type": "https://errors.example.pe/" + code, "title": code, "status": status, "code": code, "detail": detail, "trace_id": id})
 }
 func (r *Router) auth(scope string) fiber.Handler {
@@ -77,7 +84,7 @@ func (r *Router) auth(scope string) fiber.Handler {
 		if scope == "onsite:checkin" && role != "staff" && role != "supervisor" && role != "manager" {
 			return problem(c, 403, "assignment_forbidden", "rol sin permiso")
 		}
-		c.Locals("claims", ports.Claims{ActorID: actor, TenantID: tenant, Role: role, DeviceID: device, TraceID: c.Get("X-Request-Id")})
+		c.Locals("claims", ports.Claims{ActorID: actor, TenantID: tenant, Role: role, DeviceID: device, TraceID: traceID(c)})
 		return c.Next()
 	}
 }
