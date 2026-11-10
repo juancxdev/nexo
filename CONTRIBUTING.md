@@ -18,9 +18,11 @@ Se usa Gitflow ligero:
 
 ```text
 main     ← producción y entregas estables
-develop  ← integración continua de los equipos
+develop  ← rama predeterminada de GitHub e integración continua de los equipos
 feature/*, fix/*, chore/*, docs/* ← trabajo de corta duración
 ```
+
+Todo PR funcional se abre contra `develop`. `main` sólo recibe PRs de `release/*` y `hotfix/*`; GitHub debe usar `develop` como base predeterminada para impedir que un PR nuevo apunte a `main` por defecto.
 
 Al iniciar una tarea:
 

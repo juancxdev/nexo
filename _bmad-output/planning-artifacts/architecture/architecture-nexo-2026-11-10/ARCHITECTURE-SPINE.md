@@ -54,7 +54,7 @@ flowchart LR
 
 **Prevents:** integración directa de cambios sin revisión o sin pruebas.
 
-**Rule:** `main` es estable, `develop` integra; todo trabajo vive en ramas `feature/`, `fix/`, `chore/`, `docs/`, `release/` u `hotfix/`. El merge requiere CI verde y revisión. Hasta conectar GitHub, esta regla se aplica por proceso; al conectar `origin`, el ruleset descrito en `GITHUB-REPOSITORY-SETUP.md` la vuelve obligatoria.
+**Rule:** `main` es estable, `develop` integra y es la rama predeterminada de GitHub; todo trabajo vive en ramas `feature/`, `fix/`, `chore/`, `docs/`, `release/` u `hotfix/`. El merge requiere CI verde y revisión. Hasta conectar GitHub, esta regla se aplica por proceso; al conectar `origin`, el ruleset descrito en `GITHUB-REPOSITORY-SETUP.md` la vuelve obligatoria.
 
 ### AD-4 — Fixtures aislados y contratos compatibles [ADOPTED]
 

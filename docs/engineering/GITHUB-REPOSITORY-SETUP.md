@@ -10,7 +10,9 @@ git push -u origin main
 git push -u origin develop
 ```
 
-La rama `develop` ya debe existir localmente antes de incorporar equipos. No entregar acceso de escritura directo a `main`.
+La rama `develop` ya debe existir localmente antes de incorporar equipos. En **GitHub → Settings → General → Default branch**, cambiar la rama predeterminada de `main` a `develop`. No entregar acceso de escritura directo a `main`.
+
+Con `develop` como predeterminada, los PR nuevos proponen esa rama como destino. Sólo los release managers deben cambiar manualmente el destino a `main` para `release/*` y `hotfix/*`.
 
 ## Rulesets requeridos
 
