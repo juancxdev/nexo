@@ -16,6 +16,7 @@ type MicrofrontendManifest = {
 };
 
 type ModuleContext = {
+  version: 1;
   tenantId: string;
   workspaceId: string;
   capabilities: Capability[];
@@ -30,12 +31,14 @@ type ModuleContext = {
 2. Sus rutas deben usar un namespace propio, por ejemplo `/cms`, `/registrations` o `/onsite`.
 3. El módulo no importa componentes internos de otro módulo ni modifica estado global del shell.
 4. Todo color, tipografía, espaciado, foco y estado visual usa `src/design-system` y sus tokens.
-5. El acceso se declara con `capabilities`; el shell filtra el menú y el montaje con el mismo contrato.
+5. El acceso se declara con `capabilities`; el shell filtra el menú y el montaje con el mismo contrato, incluido el acceso directo por URL.
 6. Estados de carga, error, vacío y API no disponible deben ser visibles y no romper `AppShell`.
 
 ## Registro
 
-Agregar el manifest a `src/platform/microfrontends/registry.tsx`. El runtime actual carga módulos localmente con `load()`. En despliegue independiente, el cuerpo de `load()` puede sustituirse por un remote loader/Module Federation sin cambiar navegación, permisos ni el componente raíz.
+Agregar el manifest a `src/platform/microfrontends/registry.tsx`. El runtime actual carga módulos localmente con `load()` y resuelve rutas desde ese registry. En despliegue independiente, el cuerpo de `load()` puede sustituirse por un remote loader/Module Federation sin cambiar navegación, permisos ni el componente raíz.
+
+El manifest debe pasar `validateRegistry()`: `id` y rutas únicas, `defaultRoute` declarada y rutas hijas dentro de su namespace.
 
 ## API y sesión
 

@@ -27,6 +27,10 @@ nexo/
 
 La base frontend y el Core API inicial ya están implementados. El frontend usa sesión mock temporalmente; el adaptador de sesión real contra el Core API queda como siguiente integración. Los módulos de eventos, CMS, check-in, reportes y HukID permanecen fuera del Core API.
 
+## Integración de equipos
+
+Antes de crear o modificar un módulo, leer [CONTRIBUTING.md](CONTRIBUTING.md) y la [guía de integración](docs/engineering/MODULE-INTEGRATION.md). El skill reutilizable para agentes está en [skills/nexo-module-integration/SKILL.md](skills/nexo-module-integration/SKILL.md).
+
 ## Regla pendiente de consolidación de PostgreSQL
 
 Onsite Operations usa temporalmente la base `nexo_onsite` para aislar el primer corte vertical. Antes de integrar todos los servicios debe migrarse al PostgreSQL compartido del proyecto, usando el schema `onsite` dentro de la base `nexo`.

@@ -12,10 +12,10 @@ npm run dev
 La aplicación queda en `http://localhost:5174`. Para conectar el backend del Equipo 4:
 
 ```bash
-VITE_TEAM4_API_URL=http://localhost:8080 npm run dev
+VITE_TEAM4_API_URL=http://localhost:8082 npm run dev
 ```
 
-El backend de Team 4 se ejecuta aparte desde `/Users/juancx/Documents/CX-Developments/SELF/onsite-operations/backend`. La sesión, tenant y capabilities del shell son mocks deliberados en esta base; el Core API los reemplazará en la siguiente integración.
+El backend de Team 4 se ejecuta aparte desde `../microservices/onsite-operations`. La sesión, tenant y capabilities del shell son mocks deliberados en esta base; el Core API los reemplazará en la siguiente integración.
 
 ## Microfrontends
 
