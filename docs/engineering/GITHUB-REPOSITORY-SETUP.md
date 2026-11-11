@@ -23,7 +23,7 @@ Aplicar el mismo ruleset a `main` y `develop`:
 - Requerir una aprobación; para archivos de plataforma, requerir revisión de Code Owners.
 - Invalidar aprobaciones cuando cambie el head del PR.
 - Requerir rama actualizada antes del merge.
-- Requerir los checks `frontend-quality`, `frontend-e2e`, `core-api` y `onsite-operations`.
+- Requerir los checks `frontend-quality`, `frontend-e2e`, `core-api` y `microservices-quality`.
 - Restringir bypass a release manager y administrador del repositorio, dejando registro de auditoría.
 
 ## Code Owners
