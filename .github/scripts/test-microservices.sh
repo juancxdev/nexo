@@ -37,3 +37,11 @@ for mod in "${services[@]}"; do
 
   echo "::endgroup::"
 done
+
+echo "::group::Validando tools/hukid-simulator"
+(
+  cd tools/hukid-simulator
+  go test ./...
+  go vet ./...
+)
+echo "::endgroup::"

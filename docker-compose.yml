@@ -1,0 +1,84 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: nexo
+      POSTGRES_USER: nexo
+      POSTGRES_PASSWORD: nexo-local-only
+    ports: ["5433:5432"]
+    volumes: [nexo_pg_data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexo -d nexo"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  migrate-core:
+    image: migrate/migrate:v4.18.3
+    depends_on: {postgres: {condition: service_healthy}}
+    volumes: [./backend/migrations:/migrations:ro]
+    command: ["-path=/migrations", "-database=postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable&x-migrations-table=core_schema_migrations", "up"]
+  migrate-onsite:
+    image: migrate/migrate:v4.18.3
+    depends_on: {migrate-core: {condition: service_completed_successfully}}
+    volumes: [./microservices/onsite-operations/migrations:/migrations:ro]
+    command: ["-path=/migrations", "-database=postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable&x-migrations-table=onsite_schema_migrations", "up"]
+  seed-onsite:
+    image: postgres:16-alpine
+    depends_on: {migrate-onsite: {condition: service_completed_successfully}}
+    volumes: [./microservices/onsite-operations/seeds:/seeds:ro]
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["psql postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable -f /seeds/demo-day.sql -f /seeds/demo-day-presence.sql"]
+  migrate-operations:
+    image: migrate/migrate:v4.18.3
+    depends_on: {seed-onsite: {condition: service_completed_successfully}}
+    volumes: [./microservices/event-operations/migrations:/migrations:ro]
+    command: ["-path=/migrations", "-database=postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable&x-migrations-table=operations_schema_migrations", "up"]
+  seed-operations:
+    image: postgres:16-alpine
+    depends_on: {migrate-operations: {condition: service_completed_successfully}}
+    volumes: [./microservices/event-operations/seeds:/seeds:ro]
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["psql postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable -f /seeds/demo-day-operations.sql"]
+  core-api:
+    build: ./backend
+    depends_on: {migrate-core: {condition: service_completed_successfully}}
+    environment:
+      DATABASE_URL: postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable
+      NEXO_JWT_ISSUER: http://core-api:8081
+      NEXO_JWT_AUDIENCE: nexo-services
+      NEXO_CORE_API_ADDR: :8081
+    ports: ["8081:8081"]
+  onsite-operations-api:
+    build: ./microservices/onsite-operations
+    depends_on: {seed-onsite: {condition: service_completed_successfully}}
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable
+      ONSITE_ADDR: :8082
+      CORE_JWKS_URL: http://core-api:8081/.well-known/jwks.json
+      NEXO_JWT_ISSUER: http://core-api:8081
+      NEXO_JWT_AUDIENCE: nexo-services
+    ports: ["8082:8082"]
+  event-operations-api:
+    build: ./microservices/event-operations
+    depends_on: {seed-operations: {condition: service_completed_successfully}}
+    environment:
+      DATABASE_URL: postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable
+      OPERATIONS_ADDR: :8083
+    ports: ["8083:8083"]
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address :9001
+    environment: {MINIO_ROOT_USER: nexo, MINIO_ROOT_PASSWORD: nexo-local-only}
+    ports: ["9000:9000", "9001:9001"]
+    volumes: [nexo_minio_data:/data]
+  mailpit:
+    image: axllent/mailpit:latest
+    ports: ["1025:1025", "8025:8025"]
+  hukid-simulator:
+    build: ./tools/hukid-simulator
+    ports: ["8090:8090"]
+
+volumes:
+  nexo_pg_data:
+  nexo_minio_data:

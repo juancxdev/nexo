@@ -10,6 +10,9 @@ var (
 	ErrAlreadyPresent         = errors.New("already_present")
 	ErrIdempotencyKeyRequired = errors.New("idempotency_key_required")
 	ErrIdempotencyKeyReused   = errors.New("idempotency_key_reused")
+	ErrNotPresent             = errors.New("not_present")
+	ErrInvalidState           = errors.New("invalid_state_transition")
+	ErrDeviceRevoked          = errors.New("device_revoked")
 )
 
 type Ticket struct {
@@ -21,6 +24,15 @@ type AttendanceFact struct {
 	ID, TicketID, EventID, Scope, Type, ActorID, DeviceID, Reason, CompensatesFactID string
 	OccurredAt                                                                       time.Time
 	EffectiveStatus                                                                  string
+}
+
+type Device struct {
+	ID, TenantID, Label, Status, VenueID, PublicKey, ReleaseVersion string
+	LastSeenAt, RevokedAt                                           *time.Time
+}
+type Shift struct {
+	ID, EventID, Scope, DeviceID, ActorID, Status string
+	OpenedAt, ClosedAt                            *time.Time
 }
 
 func (t Ticket) Validate(event, scope string, now time.Time) string {

@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"context"
+	"crypto"
 	"crypto/hmac"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -23,8 +25,11 @@ import (
 )
 
 type Server struct {
-	Repo   ports.Repository
-	Secret string
+	Repo       ports.Repository
+	Issuer     string
+	Audience   string
+	PrivateKey *rsa.PrivateKey
+	KeyID      string
 }
 type contextKey string
 
@@ -48,19 +53,29 @@ type refreshRequest struct {
 }
 
 func NewServer(repo ports.Repository) *Server {
-	secret := os.Getenv("NEXO_JWT_SECRET")
-	if secret == "" {
-		secret = "nexo-local-development-secret-change-me"
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		panic(err)
 	}
-	return &Server{Repo: repo, Secret: secret}
+	issuer := os.Getenv("NEXO_JWT_ISSUER")
+	if issuer == "" {
+		issuer = "http://localhost:8081"
+	}
+	audience := os.Getenv("NEXO_JWT_AUDIENCE")
+	if audience == "" {
+		audience = "nexo-services"
+	}
+	return &Server{Repo: repo, Issuer: issuer, Audience: audience, PrivateKey: key, KeyID: "nexo-dev-1"}
 }
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.health)
+	mux.HandleFunc("/.well-known/jwks.json", s.jwks)
 	mux.HandleFunc("/v1/auth/register", s.register)
 	mux.HandleFunc("/v1/auth/login", s.login)
 	mux.HandleFunc("/v1/auth/refresh", s.refresh)
 	mux.Handle("/v1/auth/me", s.withAuth(http.HandlerFunc(s.me)))
+	mux.Handle("/v1/auth/tenant-context", s.withAuth(http.HandlerFunc(s.tenantContext)))
 	mux.Handle("/v1/auth/logout", s.withAuth(http.HandlerFunc(s.logout)))
 	mux.Handle("/v1/tenants", s.withAuth(http.HandlerFunc(s.tenants)))
 	mux.Handle("/v1/navigation/sidebar", s.withAuth(http.HandlerFunc(s.sidebar)))
@@ -90,6 +105,15 @@ func decode(r *http.Request, target any) error {
 }
 func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, 200, map[string]string{"status": "ok", "service": "nexo-core-api", "persistence": "postgres"})
+}
+
+func (s *Server) jwks(w http.ResponseWriter, _ *http.Request) {
+	pub := &s.PrivateKey.PublicKey
+	writeJSON(w, http.StatusOK, map[string]any{"keys": []map[string]string{{
+		"kty": "RSA", "use": "sig", "alg": "RS256", "kid": s.KeyID,
+		"n": base64.RawURLEncoding.EncodeToString(pub.N.Bytes()),
+		"e": base64.RawURLEncoding.EncodeToString([]byte{1, 0, 1}),
+	}}})
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
@@ -144,8 +168,17 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createSession(ctx context.Context, u auth.User) (map[string]any, error) {
 	now := time.Now().UTC()
 	sid := uuid.NewString()
-	claims := auth.Claims{Subject: u.ID, SessionID: sid, Expires: now.Add(8 * time.Hour).Unix()}
-	access, err := sign(claims, s.Secret)
+	tenantIDs, _ := s.Repo.ListTenants(ctx, u.ID)
+	claims := auth.Claims{Issuer: s.Issuer, Audience: s.Audience, Subject: u.ID, SessionID: sid, Expires: now.Add(8 * time.Hour).Unix(), IssuedAt: now.Unix(), JWTID: uuid.NewString()}
+	for _, t := range tenantIDs {
+		claims.TenantIDs = append(claims.TenantIDs, t.ID)
+	}
+	if len(claims.TenantIDs) > 0 {
+		claims.TenantID = claims.TenantIDs[0]
+	}
+	claims.Roles = []string{"owner"}
+	claims.Scopes = []string{"onsite:checkin", "onsite:read", "onsite:void", "reports:read", "certificates:issue"}
+	access, err := s.sign(claims)
 	if err != nil {
 		return nil, err
 	}
@@ -194,7 +227,7 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 			return
 		}
 		var c auth.Claims
-		if !verify(raw, s.Secret, &c) {
+		if !s.verify(raw, &c) {
 			errorJSON(w, 401, "unauthorized", "token inválido o vencido")
 			return
 		}
@@ -210,6 +243,47 @@ func (s *Server) withAuth(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), claimsKey, c)))
 	})
+}
+
+func (s *Server) tenantContext(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	var in struct {
+		TenantID string `json:"tenant_id"`
+	}
+	if decode(r, &in) != nil || strings.TrimSpace(in.TenantID) == "" {
+		errorJSON(w, 400, "invalid_tenant_context", "tenant_id es obligatorio")
+		return
+	}
+	c := claims(r)
+	role, err := s.Repo.MembershipRole(r.Context(), c.Subject, in.TenantID)
+	if err != nil {
+		errorJSON(w, 403, "tenant_forbidden", "el usuario no pertenece al tenant")
+		return
+	}
+	now := time.Now().UTC()
+	newClaims := auth.Claims{Issuer: s.Issuer, Audience: s.Audience, Subject: c.Subject, SessionID: c.SessionID, TenantID: in.TenantID, TenantIDs: c.TenantIDs, Roles: []string{role}, Scopes: scopesForRole(role), IssuedAt: now.Unix(), Expires: now.Add(8 * time.Hour).Unix(), JWTID: uuid.NewString()}
+	access, err := s.sign(newClaims)
+	if err != nil {
+		errorJSON(w, 500, "token_error", "no se pudo crear el contexto")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"access_token": access, "expires_at": newClaims.Expires, "tenant_id": in.TenantID, "role": role, "scopes": newClaims.Scopes})
+}
+
+func scopesForRole(role string) []string {
+	switch role {
+	case "owner", "admin":
+		return []string{"onsite:checkin", "onsite:read", "onsite:void", "reports:read", "reports:export_sensitive", "communications:send", "certificates:issue", "certificates:revoke"}
+	case "supervisor":
+		return []string{"onsite:checkin", "onsite:read", "onsite:void", "reports:read"}
+	case "staff":
+		return []string{"onsite:checkin", "onsite:read"}
+	default:
+		return []string{"onsite:read"}
+	}
 }
 func claims(r *http.Request) auth.Claims {
 	value, _ := r.Context().Value(claimsKey).(auth.Claims)
@@ -331,32 +405,34 @@ func randomToken() string {
 	return base64.RawURLEncoding.EncodeToString(buf)
 }
 func hash(value string) []byte { sum := sha256.Sum256([]byte(value)); return sum[:] }
-func sign(c auth.Claims, secret string) (string, error) {
-	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+func (s *Server) sign(c auth.Claims) (string, error) {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT","kid":"nexo-dev-1"}`))
 	payloadBytes, err := json.Marshal(c)
 	if err != nil {
 		return "", err
 	}
 	payload := base64.RawURLEncoding.EncodeToString(payloadBytes)
 	unsigned := header + "." + payload
-	mac := hmac.New(sha256.New, []byte(secret))
-	_, _ = mac.Write([]byte(unsigned))
-	return unsigned + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+	digest := sha256.Sum256([]byte(unsigned))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, s.PrivateKey, crypto.SHA256, digest[:])
+	if err != nil {
+		return "", err
+	}
+	return unsigned + "." + base64.RawURLEncoding.EncodeToString(sig), nil
 }
-func verify(token, secret string, c *auth.Claims) bool {
+func (s *Server) verify(token string, c *auth.Claims) bool {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return false
 	}
-	mac := hmac.New(sha256.New, []byte(secret))
-	_, _ = mac.Write([]byte(parts[0] + "." + parts[1]))
 	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil || !hmac.Equal(sig, mac.Sum(nil)) {
+	digest := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
+	if err != nil || rsa.VerifyPKCS1v15(&s.PrivateKey.PublicKey, crypto.SHA256, digest[:], sig) != nil {
 		return false
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil || json.Unmarshal(payload, c) != nil {
 		return false
 	}
-	return c.Subject != "" && c.SessionID != "" && c.Expires > time.Now().Unix()
+	return c.Subject != "" && c.SessionID != "" && c.Issuer == s.Issuer && c.Audience == s.Audience && c.Expires > time.Now().Unix()
 }

@@ -1,0 +1,10 @@
+openapi: 3.1.0
+info: {title: HukID Integration API Simulator, version: 0.1.0}
+paths:
+  /oauth2/token: {post: {summary: OAuth client credentials token}}
+  /v1/issuance-requests:
+    post: {summary: Create or replay an issuance request}
+  /v1/issuance-requests/{id}:
+    get: {summary: Read an issuance request}
+  /v1/issuance-requests/{id}/cancellations:
+    post: {summary: Cancel an issuance request}
