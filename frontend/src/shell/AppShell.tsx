@@ -2,6 +2,7 @@ import {useEffect,useMemo,useState} from 'react';
 import type {ComponentType} from 'react';
 import {useLocation,useNavigate} from './router';
 import {AuthPage} from '../auth/AuthPage';
+import {HomePage} from '../home';
 import {clearSession,fetchSidebar,isSessionValid,logout,readSession} from '../core/session';
 import type {Session} from '../core/session';
 import {useI18n} from '../core/i18n';
@@ -14,11 +15,12 @@ const capabilities:ModuleContext['capabilities']=['onsite:read','onsite:checkin'
 export function AppShell(){
  const navigate=useNavigate(),location=useLocation(),{t}=useI18n();
  const [session,setSession]=useState<Session|null>(()=>readSession());const [collapsed,setCollapsed]=useState(false);const [mobileOpen,setMobileOpen]=useState(false);const [theme,setTheme]=useState<'light'|'dark'>('light');const [serverModuleIds,setServerModuleIds]=useState<string[]|null>(null);const [activeTenantId,setActiveTenantId]=useState(()=>readSession()?.tenants[0]?.id||'');
- const authenticated=isSessionValid(session),publicRoute=location.pathname==='/login';
+ const authenticated=isSessionValid(session),publicRoute=location.pathname==='/login',homeRoute=location.pathname==='/';
  useEffect(()=>{document.documentElement.dataset.theme=theme},[theme]);
- useEffect(()=>{if(!authenticated&&!publicRoute)navigate('/login');if(authenticated&&publicRoute)navigate('/')},[authenticated,publicRoute,navigate]);
+ useEffect(()=>{if(!authenticated&&!publicRoute&&!homeRoute)navigate('/login');if(authenticated&&publicRoute)navigate('/')},[authenticated,publicRoute,homeRoute,navigate]);
  useEffect(()=>{if(!session||!authenticated)return;fetchSidebar(session.access_token,activeTenantId).then(result=>setServerModuleIds(result.items.map(item=>item.id))).catch(()=>setServerModuleIds(null))},[authenticated,session,activeTenantId]);
  const modules=useMemo(()=>{const capable=visibleModules(capabilities);return serverModuleIds?capable.filter(module=>serverModuleIds.includes(module.id)):capable},[serverModuleIds]);
+ if((!session||!authenticated)&&homeRoute)return <HomePage onAccess={()=>navigate('/login')}/>;
  if(!session||!authenticated)return <AuthPage onAuthenticated={value=>{setSession(value);setActiveTenantId(value.tenants[0]?.id||'');navigate('/')}}/>;
  const tenant=session.tenants.find(item=>item.id===activeTenantId)||session.tenants[0];const context:ModuleContext={version:1,tenantId:tenant?.id||'',workspaceId:tenant?.id||'',capabilities,apiBaseUrl:import.meta.env.VITE_TEAM4_API_URL||'http://localhost:8082',theme,route:location.pathname};const active=location.pathname==='/'?'overview':findModuleForRoute(location.pathname,modules)?.id||'';
  const signOut=async()=>{try{await logout(session.access_token)}catch{}clearSession();setSession(null);navigate('/login')};
