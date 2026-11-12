@@ -7,7 +7,8 @@ export function readSession():Session|null{try{const raw=sessionStorage.getItem(
 export function saveSession(session:Session){sessionStorage.setItem(key,JSON.stringify(session))}
 export function clearSession(){sessionStorage.removeItem(key)}
 export function isSessionValid(session:Session|null){return !!session&&session.expires_at>Math.floor(Date.now()/1000)}
-async function request<T>(path:string,init:RequestInit={}):Promise<T>{const response=await fetch(`${coreApiUrl}${path}`,{...init,headers:{'Content-Type':'application/json',...(init.headers||{})}});const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.message||body.code||'No se pudo completar la solicitud');return body as T}
+export const connectionErrorMessage='No pudimos conectar con el servidor. Revisa tu conexión e inténtalo de nuevo en unos minutos.';
+async function request<T>(path:string,init:RequestInit={}):Promise<T>{let response:Response;try{response=await fetch(`${coreApiUrl}${path}`,{...init,headers:{'Content-Type':'application/json',...(init.headers||{})}})}catch(cause){console.error(`Sin conexión con Core API (${coreApiUrl}${path})`,cause);throw new Error(connectionErrorMessage)}const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(body.message||body.code||'No se pudo completar la solicitud');return body as T}
 export function login(email:string,password:string){return request<Omit<Session,'tenants'>>('/v1/auth/login',{method:'POST',body:JSON.stringify({email,password})})}
 export function register(email:string,name:string,password:string){return request<{user:Profile}>('/v1/auth/register',{method:'POST',body:JSON.stringify({email,name,password})})}
 export function createTenant(accessToken:string,name:string,slug?:string){return request<{tenant:Tenant}>('/v1/tenants',{method:'POST',headers:{Authorization:`Bearer ${accessToken}`},body:JSON.stringify({name,slug})})}
