@@ -1,3 +1,5 @@
+# Fixture aislado exclusivo para pruebas de Event Configuration.
+# El desarrollo integrado usa ../../docker-compose.yml y PostgreSQL `nexo`.
 name: nexo-events-local-fixture
 
 services:

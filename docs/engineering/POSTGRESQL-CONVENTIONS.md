@@ -16,17 +16,15 @@ nexo
 
 Un servicio es dueño de su schema, de sus migraciones y de su rol PostgreSQL. Ningún servicio hace joins ni escrituras sobre schemas de otro servicio.
 
-## DB-PLATFORM-01 — Pendiente bloqueante para nuevos backends
+## Operación central y contenedores independientes
 
-El estado actual es transitorio: Core usa `nexo` y Onsite usa `nexo_onsite`. Antes de integrar un nuevo backend se debe completar esta tarea de plataforma:
+El compose raíz opera una instancia PostgreSQL `nexo` y contenedores separados por servicio. Compartir PostgreSQL no convierte el sistema en monolítico: cada API y worker se construye, reinicia y despliega por nombre de servicio. En desarrollo, reconstruir Eventos no debe recrear Core, Onsite ni Operations:
 
-1. Crear el Compose/orquestador raíz para PostgreSQL `nexo`.
-2. Crear `platform_meta`, schemas y un rol sin privilegios globales por servicio.
-3. Migrar Onsite al schema `onsite` de `nexo` sin pérdida de datos de desarrollo.
-4. Reemplazar los `docker-compose.yml` con bases aisladas por perfiles que consuman el Postgres raíz.
-5. Publicar `make db-up`, `make db-reset-test` y `make db-verify` desde la raíz.
+```bash
+docker compose up -d --build event-configuration-api event-configuration-worker
+```
 
-Mientras `DB-PLATFORM-01` no esté terminado, los equipos pueden diseñar dominio, OpenAPI, UI y tests con mocks, pero no deben crear una tercera base ni considerar integrado su backend.
+Cada servicio depende de PostgreSQL y de su job de migración para el primer arranque; no debe depender de otro API para mantenerse saludable. Los compose con bases aisladas sólo pueden existir como fixtures explícitos de pruebas y nunca son la ruta normal del proyecto.
 
 ## Migraciones por servicio
 

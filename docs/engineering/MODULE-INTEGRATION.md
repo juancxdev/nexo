@@ -87,7 +87,7 @@ microservices/<service-id>/
 
 Reglas:
 
-- Go + Fiber; dominio y casos de uso no importan Fiber, pgx ni infraestructura.
+- Go + Fiber es la convención para los servicios nuevos. Los módulos ya integrados con otro runtime, como Event Configuration (NestJS/Node), deben mantener su runtime encapsulado, exponer OpenAPI y sumar sus pruebas al check agregado `microservices-quality`.
 - Se documenta cada endpoint en OpenAPI antes de integrarlo en el frontend.
 - Errores HTTP usan `application/problem+json` con `code` estable y `trace_id`.
 - Las escrituras expuestas públicamente requieren autorización, validación de tenant y, cuando aplique, `Idempotency-Key`.
@@ -96,22 +96,21 @@ Reglas:
 - Cada servicio usa un rol PostgreSQL propio con `USAGE, CREATE` sólo en su schema; no se entregan credenciales de superusuario a la API. No se permiten joins a schemas ajenos para implementar reglas de negocio.
 - Se intercambia información entre dominios mediante API o eventos/proyecciones documentadas.
 
-La consolidación hacia la BD única todavía no está implementada: Core usa `nexo` y Onsite usa temporalmente `nexo_onsite`. Ningún equipo debe crear una tercera base o asumir la topología final; primero debe completarse la tarea de plataforma `DB-PLATFORM-01` descrita en `POSTGRESQL-CONVENTIONS.md`.
+La base única `nexo` ya es la topología de desarrollo integrada. Ningún equipo debe crear una segunda base para su módulo: cada dominio incorpora su schema, rol, migraciones y seed al orquestador raíz.
 
 ## Contratos y cambios compatibles
 
 ### Convención de CI para microservicios
 
 El workflow publica un único check requerido llamado `microservices-quality`.
-El script `.github/scripts/test-microservices.sh` descubre cada
-`microservices/<service-id>/go.mod` y valida todos los servicios encontrados.
+El script `.github/scripts/test-microservices.sh` descubre los servicios Go y ejecuta también el workspace Node/Nest de Event Configuration.
 
 - Si el servicio tiene un target `test` en su `Makefile`, la CI ejecuta `make test`.
 - Si no tiene `Makefile` o target `test`, ejecuta `go test ./...` directamente.
 - En ambos casos ejecuta `go vet ./...`.
 - Si el servicio tiene `docker-compose.yml` o `compose.yml`, puede levantar recursos efímeros durante sus pruebas y debe poder limpiarlos con `docker compose down -v`.
 - El servicio no debe depender de otro microservicio ni de una base de datos compartida para pasar este check.
-- Agregar un nuevo microservicio Go no requiere modificar el workflow: basta con cumplir la estructura y esta convención.
+- Agregar un nuevo microservicio Go no requiere modificar el workflow: basta con cumplir la estructura y esta convención. Un runtime distinto debe declarar sus comandos reproducibles y extender explícitamente el check agregado.
 
 Las pruebas de integración deben ser deterministas, aisladas y capaces de ejecutarse en
 un runner Ubuntu de GitHub Actions con Docker disponible. Los nombres individuales de

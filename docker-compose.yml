@@ -5,7 +5,7 @@ services:
       POSTGRES_DB: nexo
       POSTGRES_USER: nexo
       POSTGRES_PASSWORD: nexo-local-only
-    ports: ["5433:5432"]
+    ports: ["${POSTGRES_PORT:-5433}:5432"]
     volumes: [nexo_pg_data:/var/lib/postgresql/data]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nexo -d nexo"]
@@ -33,6 +33,42 @@ services:
     depends_on: {seed-onsite: {condition: service_completed_successfully}}
     volumes: [./microservices/event-operations/migrations:/migrations:ro]
     command: ["-path=/migrations", "-database=postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable&x-migrations-table=operations_schema_migrations", "up"]
+  bootstrap-events:
+    build: ./microservices/event-configuration
+    command: ["node", "scripts/bootstrap-shared.mjs"]
+    depends_on: {postgres: {condition: service_healthy}}
+    environment:
+      NEXO_SHARED_DATABASE: "true"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: nexo
+      POSTGRES_USER: nexo
+      POSTGRES_PASSWORD: nexo-local-only
+      EVENTS_MIGRATOR_USER: events_migrator
+      EVENTS_MIGRATOR_PASSWORD: events-migrator-local-only
+      APP_DB_USER: configuration_app
+      APP_DB_PASSWORD: configuration-app-local-only
+    restart: "no"
+  migrate-events:
+    build: ./microservices/event-configuration
+    command: ["node", "scripts/migrate.mjs"]
+    depends_on: {bootstrap-events: {condition: service_completed_successfully}}
+    environment:
+      NEXO_SHARED_DATABASE: "true"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: nexo
+      EVENTS_MIGRATOR_USER: events_migrator
+      EVENTS_MIGRATOR_PASSWORD: events-migrator-local-only
+      APP_DB_USER: configuration_app
+    restart: "no"
+  seed-events:
+    image: postgres:16-alpine
+    depends_on: {migrate-events: {condition: service_completed_successfully}}
+    volumes: [./microservices/event-configuration/db/seed:/seeds:ro]
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["psql postgres://events_migrator:events-migrator-local-only@postgres:5432/nexo?sslmode=disable -f /seeds/datos-demostracion.sql"]
+    restart: "no"
   seed-operations:
     image: postgres:16-alpine
     depends_on: {migrate-operations: {condition: service_completed_successfully}}
@@ -66,6 +102,56 @@ services:
       DATABASE_URL: postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable
       OPERATIONS_ADDR: :8083
     ports: ["8083:8083"]
+  event-configuration-api:
+    build: ./microservices/event-configuration
+    depends_on: {seed-events: {condition: service_completed_successfully}}
+    environment:
+      NODE_ENV: development
+      PORT: "3000"
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: nexo
+      POSTGRES_USER: configuration_app
+      POSTGRES_PASSWORD: configuration-app-local-only
+      AUTH_MODE: nexo_jwks
+      CORE_JWKS_URL: http://core-api:8081/.well-known/jwks.json
+      NEXO_JWT_ISSUER: http://core-api:8081
+      NEXO_JWT_AUDIENCE: nexo-services
+      MEMBERSHIP_MODE: mock
+      BROKER_MODE: simulator
+    ports: ["${EVENT_CONFIGURATION_PORT:-3000}:3000"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/configuration/v1/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+  event-configuration-worker:
+    build: ./microservices/event-configuration
+    command: ["node", "apps/configuration-worker/src/main.mjs"]
+    depends_on: {seed-events: {condition: service_completed_successfully}}
+    environment:
+      NODE_ENV: development
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: nexo
+      POSTGRES_USER: configuration_app
+      POSTGRES_PASSWORD: configuration-app-local-only
+      BROKER_MODE: simulator
+      WORKER_HEARTBEAT_FILE: /tmp/worker-heartbeat
+      WORKER_TENANT_IDS: 0194eb00-0000-7000-8000-000000000001,0194eb00-0000-7000-8000-000000000002
+      WORKER_POLL_INTERVAL_MS: "1000"
+      WORKER_BATCH_SIZE: "10"
+      WORKER_LEASE_SECONDS: "60"
+      WORKER_MAX_BACKOFF_SECONDS: "300"
+    healthcheck:
+      test: ["CMD", "node", "-e", "const fs=require('node:fs');const file=process.env.WORKER_HEARTBEAT_FILE;const ts=Number(fs.readFileSync(file,'utf8'));process.exit(Number.isFinite(ts)&&Date.now()-ts<30000?0:1)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
   minio:
     image: quay.io/minio/minio:latest
     command: server /data --console-address :9001

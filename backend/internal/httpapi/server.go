@@ -276,11 +276,11 @@ func (s *Server) tenantContext(w http.ResponseWriter, r *http.Request) {
 func scopesForRole(role string) []string {
 	switch role {
 	case "owner", "admin":
-		return []string{"onsite:checkin", "onsite:read", "onsite:void", "reports:read", "reports:export_sensitive", "communications:send", "certificates:issue", "certificates:revoke"}
+		return []string{"onsite:checkin", "onsite:read", "onsite:void", "reports:read", "reports:export_sensitive", "communications:send", "certificates:issue", "certificates:revoke", "events:read", "events:write", "events:publish"}
 	case "supervisor":
-		return []string{"onsite:checkin", "onsite:read", "onsite:void", "reports:read"}
+		return []string{"onsite:checkin", "onsite:read", "onsite:void", "reports:read", "events:read", "events:write"}
 	case "staff":
-		return []string{"onsite:checkin", "onsite:read"}
+		return []string{"onsite:checkin", "onsite:read", "events:read"}
 	default:
 		return []string{"onsite:read"}
 	}

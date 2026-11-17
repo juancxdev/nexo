@@ -29,10 +29,10 @@ RUN pnpm install --prod --frozen-lockfile --filter @team-2/configuration-api --f
 
 COPY --from=build --chown=node:node /app/apps/configuration-api/dist apps/configuration-api/dist
 COPY --chown=node:node apps/configuration-worker/src apps/configuration-worker/src
-COPY --chown=node:node db/migrations db/migrations
 COPY --chown=node:node db/nexo-migrations db/nexo-migrations
 COPY --chown=node:node scripts/migrate.mjs scripts/migrate.mjs
 COPY --chown=node:node scripts/bootstrap-local.mjs scripts/bootstrap-local.mjs
+COPY --chown=node:node scripts/bootstrap-shared.mjs scripts/bootstrap-shared.mjs
 
 USER node
 EXPOSE 3000

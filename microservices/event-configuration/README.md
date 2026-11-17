@@ -1,43 +1,48 @@
 # Event Configuration — Nexo
 
-Esta carpeta es una copia local preparada en `microservices/event-configuration` dentro de Nexo. API y worker conservan NestJS/Node y su workspace pnpm; la demo `configuration-admin` es independiente del microfrontend `frontend/src/microfrontends/events`. El repositorio original del Grupo 2 se conserva intacto. Esta copia local de Nexo no contiene `.git`: el traslado aún no está revisado ni fusionado en Nexo.
+El Grupo 2 administra eventos, agendas, sedes, ponentes, formularios y publicación. El módulo contiene:
 
-El Compose de esta carpeta es un **fixture aislado de desarrollo**, con proyecto `nexo-events-local-fixture`; no es el PostgreSQL común ni completa `DB-PLATFORM-01`. No ejecutar su bootstrap contra la base compartida. La integración real de identidad, tenant, broker y consumidores sigue pendiente.
+- API NestJS: `event-configuration-api` en el puerto `3000`.
+- Worker de outbox: `event-configuration-worker`.
+- Microfrontend React integrado en `frontend/src/microfrontends/events`.
+- Schema PostgreSQL propietario: `events` dentro de la única base lógica `nexo`.
 
-## Servicio de configuración de eventos
+## Entorno integrado
 
-Proyecto del Grupo 2 para configurar eventos, recursos y agendas, y publicar versiones de su configuración. Incluye una API NestJS, PostgreSQL, un worker y una interfaz React en Docker Compose.
+Desde la raíz de Nexo, el stack central provisiona los roles `events_migrator` y `configuration_app`, migra `db/nexo-migrations/`, carga el seed de desarrollo y levanta API/worker:
 
-**Estado:** entorno de desarrollo. La copia local de Nexo contiene un módulo React demostrativo de eventos; su integración autenticada sigue pendiente. La API y la agenda trabajan con PostgreSQL; identidad, membresías y entrega al broker todavía tienen componentes simulados. Los formularios y bindings usan PostgreSQL; su integración con Participation sigue pendiente.
-
-## Inicio rápido
-
-Requiere Docker Desktop con Compose. Desde la raíz de este proyecto, si aún no tienes `.env`:
-
-```powershell
-Copy-Item .env.example .env
+```bash
+make events-up
+make events-rebuild   # sólo reconstruye y recrea API/worker de Eventos
+make events-logs
+make events-down
 ```
 
-Configura contraseñas locales propias en `.env` y ejecuta:
+Los contenedores son independientes. Un cambio en Eventos no reconstruye Core, Onsite ni Operations. PostgreSQL es la dependencia compartida, pero Eventos sólo puede acceder a su schema `events`; no debe leer ni escribir schemas ajenos.
 
-```powershell
-docker compose up --build -d
-docker compose ps
+La API expone Swagger en `http://localhost:3000/configuration/v1/docs` durante desarrollo. Las migraciones oficiales viven exclusivamente en `db/nexo-migrations/`; no se editan después de integrarse.
+
+## Seguridad y autenticación
+
+En el stack central, la API valida JWT RS256 emitidos por Core mediante `CORE_JWKS_URL`. El tenant, roles y scopes se derivan del token; `X-Tenant-Id` sólo puede coincidir con el tenant del token y nunca lo reemplaza. Los headers `X-Mock-*` pertenecen únicamente a development/test.
+
+## Fixture aislado
+
+`compose.fixture.yaml` conserva un PostgreSQL efímero para pruebas locales aisladas del módulo. No es parte del stack normal y no debe usarse para integrar otros equipos ni contra la base compartida.
+
+## Calidad
+
+```bash
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm build:api
+pnpm test:api
+pnpm test:contract-consumer
+pnpm test:composition
+pnpm test:worker
+pnpm test:event-schemas
+pnpm format:check
+pnpm build:admin
 ```
 
-- Interfaz: [http://localhost:8080](http://localhost:8080)
-- Swagger: [http://localhost:8080/configuration/v1/docs](http://localhost:8080/configuration/v1/docs)
-- API directa: `http://localhost:3000/configuration/v1`
-
-Estos puertos pueden cambiarse en `.env`. Para ver el worker: `docker compose logs -f worker`. Los datos persisten en el volumen PostgreSQL entre reinicios normales.
-
-La base local usa el schema `events`. Compose prepara roles y extensiones solo para desarrollo y ejecuta las migraciones con un rol separado; API y worker utilizan un rol restringido. El PostgreSQL compartido de Nexo aún no está integrado. Si el volumen contiene la instalación antigua en `public`, el arranque de migraciones se detiene para evitar sobrescribirla.
-
-## Contratos y recursos
-
-- [Guía de integración externa para otros equipos](docs/EXTERNAL-INTEGRATION.md).
-- [Contrato HTTP OpenAPI 3.1](docs/openapi.yaml).
-- [Schemas y ejemplos de eventos](contracts/configuration).
-- [Datos SQL de demostración](db/seed/datos-demostracion.sql).
-
-El compose local selecciona explícitamente los mocks de identidad y membresía y el broker simulado; el acoplamiento real sigue pendiente. Consulta Swagger para los datos y encabezados de cada operación.
+Consulta [OpenAPI](docs/openapi.yaml) y [la guía de integración externa](docs/EXTERNAL-INTEGRATION.md).

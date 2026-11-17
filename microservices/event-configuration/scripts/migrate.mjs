@@ -5,7 +5,10 @@ const { Client } = createRequire(new URL('../apps/configuration-api/package.json
 const migrationDirectory = new URL('../db/nexo-migrations/', import.meta.url);
 const runtime = process.env.APP_DB_USER || 'configuration_app';
 if (!/^[a-z_][a-z0-9_]*$/.test(runtime)) throw new Error('Invalid runtime role.');
-const client = new Client({ host: process.env.POSTGRES_HOST || 'db', port: Number(process.env.POSTGRES_PORT || 5432), database: process.env.POSTGRES_DB || 'event_configuration', user: process.env.EVENTS_MIGRATOR_USER || 'events_migrator', password: process.env.EVENTS_MIGRATOR_PASSWORD, options: '-c search_path=events,public' });
+if (process.env.NEXO_SHARED_DATABASE === 'true' && process.env.POSTGRES_DB !== 'nexo') {
+  throw new Error('Central Event Configuration migrations must target POSTGRES_DB=nexo.');
+}
+const client = new Client({ host: process.env.POSTGRES_HOST || 'postgres', port: Number(process.env.POSTGRES_PORT || 5432), database: process.env.POSTGRES_DB || 'nexo', user: process.env.EVENTS_MIGRATOR_USER || 'events_migrator', password: process.env.EVENTS_MIGRATOR_PASSWORD, options: '-c search_path=events,public' });
 const tableGrants = [
   ['events', 'SELECT, INSERT, UPDATE'], ['event_revisions', 'SELECT, INSERT'], ['assignments', 'SELECT, INSERT, UPDATE'],
   ['releases', 'SELECT, INSERT'], ['release_artifacts', 'SELECT, INSERT'], ['release_consumers', 'SELECT'],
@@ -17,6 +20,8 @@ const tableGrants = [
 ];
 try {
   await client.connect();
+  const identity = await client.query('SELECT current_user AS role, current_database() AS database');
+  if (identity.rows[0]?.role !== (process.env.EVENTS_MIGRATOR_USER || 'events_migrator')) throw new Error('Events migrations require the dedicated migrator role.');
   await client.query("SELECT pg_advisory_lock(hashtext('nexo.events.schema.migrations'))");
   const state = await client.query('SELECT version, dirty FROM platform_meta.events_schema_migrations');
   if (state.rowCount > 1 || state.rows[0]?.dirty) throw new Error('Events migration metadata is invalid or dirty; inspect before recovery.');
@@ -52,6 +57,8 @@ try {
   }
   for (const [table, permissions] of tableGrants) await client.query(`GRANT ${permissions} ON TABLE events."${table}" TO "${runtime}"`);
   await client.query(`GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA events TO "${runtime}"`);
+  await client.query(`ALTER DEFAULT PRIVILEGES FOR ROLE "${process.env.EVENTS_MIGRATOR_USER || 'events_migrator'}" IN SCHEMA events GRANT SELECT, INSERT, UPDATE ON TABLES TO "${runtime}"`);
+  await client.query(`ALTER DEFAULT PRIVILEGES FOR ROLE "${process.env.EVENTS_MIGRATOR_USER || 'events_migrator'}" IN SCHEMA events GRANT USAGE, SELECT ON SEQUENCES TO "${runtime}"`);
   console.log('Migraciones y permisos del schema events verificados.');
 } catch (error) {
   console.error('Falló la migración de events:', error.message);

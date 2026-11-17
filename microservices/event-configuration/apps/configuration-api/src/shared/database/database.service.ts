@@ -18,7 +18,7 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit() {
     const connectionString =
       this.configService.get<string>('DATABASE_URL') ||
-      `postgresql://${this.configService.get<string>('POSTGRES_USER', 'postgres')}:${this.configService.get<string>('POSTGRES_PASSWORD', 'postgres')}@${this.configService.get<string>('POSTGRES_HOST', 'localhost')}:${this.configService.get<number>('POSTGRES_PORT', 5432)}/${this.configService.get<string>('POSTGRES_DB', 'event_configuration')}`;
+      `postgresql://${this.configService.get<string>('POSTGRES_USER', 'configuration_app')}:${this.configService.get<string>('POSTGRES_PASSWORD', 'configuration-app-local-only')}@${this.configService.get<string>('POSTGRES_HOST', 'postgres')}:${this.configService.get<number>('POSTGRES_PORT', 5432)}/${this.configService.get<string>('POSTGRES_DB', 'nexo')}`;
 
     this.pool = new Pool({
       connectionString,

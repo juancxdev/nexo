@@ -31,17 +31,24 @@ La base frontend y el Core API inicial ya están implementados. El frontend usa 
 
 Antes de crear o modificar un módulo, leer [CONTRIBUTING.md](CONTRIBUTING.md) y la [guía de integración](docs/engineering/MODULE-INTEGRATION.md). El skill reutilizable para agentes está en [skills/nexo-module-integration/SKILL.md](skills/nexo-module-integration/SKILL.md).
 
-## Regla pendiente de consolidación de PostgreSQL
+## PostgreSQL y operación de servicios
 
-Onsite Operations usa temporalmente la base `nexo_onsite` para aislar el primer corte vertical. Antes de integrar todos los servicios debe migrarse al PostgreSQL compartido del proyecto, usando el schema `onsite` dentro de la base `nexo`.
+El entorno local usa una única base lógica `nexo`. Core, Onsite, Event Operations y Event Configuration poseen schemas y roles propios, sin compartir tablas. El compose raíz es un orquestador de contenedores independientes: un cambio de un servicio se despliega de forma selectiva y no exige reconstruir los demás.
 
 La base compartida no significa compartir tablas: cada servicio conserva la propiedad de su schema, migraciones y repositorios. La comunicación de negocio debe respetar contratos HTTP/eventos y no depender de joins contra tablas privadas de otro servicio.
 
-Para levantar PostgreSQL, aplicar migraciones y ejecutar el backend:
+Para levantar el stack compartido:
 
 ```bash
-cd backend
 docker compose up -d --build
+```
+
+Para operar sólo el módulo de Eventos:
+
+```bash
+make events-up
+make events-rebuild
+make events-logs
 ```
 
 Consulta [`backend/README.md`](backend/README.md) y [`backend/docs/openapi.yaml`](backend/docs/openapi.yaml) para los contratos disponibles.
