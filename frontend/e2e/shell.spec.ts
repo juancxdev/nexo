@@ -1,9 +1,26 @@
 import {test,expect} from '@playwright/test';
 
-test('sin sesión inicia en login y protege el shell',async({page})=>{
+test('sin sesión muestra la home pública y Acceder lleva al login',async({page})=>{
   await page.goto('/');
-  await expect(page.getByRole('heading',{name:'Iniciar sesión'})).toBeVisible();
+  await expect(page.getByRole('heading',{level:1})).toContainText('Eventos Extraordinarios');
+  await expect(page.getByRole('contentinfo')).toContainText('NEXO');
+  await page.getByRole('banner').getByRole('button',{name:'Acceder'}).click();
   await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByRole('heading',{name:'Iniciar sesión'})).toBeVisible();
+});
+
+test('sin sesión las rutas internas siguen protegidas',async({page})=>{
+  await page.goto('/onsite');
+  await expect(page).toHaveURL(/\/login$/);
+  await expect(page.getByRole('heading',{name:'Iniciar sesión'})).toBeVisible();
+});
+
+test('home no genera scroll horizontal en móvil',async({page})=>{
+  await page.setViewportSize({width:375,height:812});
+  await page.goto('/');
+  await expect(page.getByRole('banner').getByRole('button',{name:'Acceder'})).toBeVisible();
+  const fits=await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth);
+  expect(fits).toBeTruthy();
 });
 
 test('login no genera scroll horizontal en móvil',async({page})=>{
