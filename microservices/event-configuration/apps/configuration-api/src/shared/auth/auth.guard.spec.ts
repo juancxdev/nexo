@@ -81,7 +81,7 @@ describe('authorization guard', () => {
     expect(validClaims.organization_id).toBe(tenantId);
     expect(validClaims.scopes).toContain('events:write');
 
-    const tampered = `${token.slice(0, -1)}x`;
+    const tampered = `${token.slice(0, -4)}${token.endsWith('AAAA') ? 'BBBB' : 'AAAA'}`;
     expect(() => provider.resolve({ headers: { authorization: `Bearer ${tampered}`, 'x-tenant-id': tenantId } })).toThrow();
 
     const expired = signTestNexoJwt({ sub, exp: Math.floor(Date.now() / 1000) - 10 }, secret);

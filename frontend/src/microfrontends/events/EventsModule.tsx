@@ -349,28 +349,12 @@ export function EventsModule({
 
   const createVenue = () =>
     setDialog({
-      title: tr("Crear sede o sala"),
-      description: tr("Una sala debe pertenecer a una sede existente."),
+      title: tr("Crear sede"),
+      description: tr(
+        "Registra un recinto, campus o edificio principal de tu organización.",
+      ),
       fields: [
-        {
-          name: "kind",
-          label: tr("Tipo"),
-          type: "select",
-          required: true,
-          options: [
-            { value: "venue", label: tr("Sede") },
-            { value: "room", label: tr("Sala") },
-          ],
-        },
-        textField("name", tr("Nombre"), true),
-        {
-          name: "parent_venue_id",
-          label: tr("Sede principal (para salas)"),
-          type: "select",
-          options: venues
-            .filter((v) => v.kind === "venue")
-            .map((v) => selectOption(v, v.name)),
-        },
+        textField("name", tr("Nombre de la sede"), true),
         textField("address", tr("Dirección"), true),
         textField("locality", tr("Ciudad")),
         { name: "capacity", label: tr("Capacidad"), type: "number" },
@@ -380,15 +364,61 @@ export function EventsModule({
           type: "checkbox",
         },
       ],
-      initial: { kind: "venue", exclusive: true },
-      submit: async (body) => {
+      initial: { exclusive: true },
+      submit: async (body: RecordData) => {
         const { address, locality, ...rest } = body;
         await run("/venues", "POST", {
           ...cleanPayload(rest),
+          kind: "venue",
           location: cleanPayload({ address, locality }),
         });
       },
     });
+
+  const createRoom = () => {
+    const parentVenues = venues.filter((v) => v.kind === "venue");
+    setDialog({
+      title: tr("Crear sala"),
+      description: tr("Una sala debe pertenecer a una sede existente."),
+      fields: [
+        {
+          name: "parent_venue_id",
+          label: tr("Sede principal"),
+          type: "select",
+          required: true,
+          options: parentVenues.map((v) => selectOption(v, v.name)),
+          hint: parentVenues.length
+            ? undefined
+            : tr("Primero crea una sede arriba."),
+        },
+        textField("name", tr("Nombre de la sala"), true),
+        textField("address", tr("Ubicación o piso (opcional)")),
+        { name: "capacity", label: tr("Capacidad"), type: "number" },
+        {
+          name: "exclusive",
+          label: tr("Recurso de uso exclusivo"),
+          type: "checkbox",
+        },
+      ],
+      initial: { exclusive: true },
+      submit: async (body: RecordData) => {
+        const { address, ...rest } = body;
+        const parent = parentVenues.find((v) => v.id === body.parent_venue_id);
+        const resolvedAddress =
+          String(address || "").trim() ||
+          parent?.location?.address ||
+          "Sede principal";
+        await run("/venues", "POST", {
+          ...cleanPayload(rest),
+          kind: "room",
+          location: cleanPayload({
+            address: resolvedAddress,
+            locality: parent?.location?.locality,
+          }),
+        });
+      },
+    });
+  };
 
   const createSpeaker = () =>
     setDialog({
@@ -438,6 +468,11 @@ export function EventsModule({
 
   const createSession = () => {
     if (!requireEvent()) return;
+    const rooms = venues.filter((v) => v.kind === "room");
+    const roomOptions = rooms.map((r) => {
+      const parent = venues.find((v) => v.id === r.parent_venue_id);
+      return selectOption(r, parent ? `${r.name} (${parent.name})` : r.name);
+    });
     setDialog({
       title: tr("Crear sesión"),
       description: tr(
@@ -451,13 +486,19 @@ export function EventsModule({
           type: "select",
           required: true,
           options: programs.map((p) => selectOption(p, p.name)),
+          hint: programs.length
+            ? undefined
+            : tr("Primero crea un programa en la parte superior."),
         },
         {
           name: "venue_id",
-          label: tr("Sede o sala"),
+          label: tr("Sala"),
           type: "select",
           required: true,
-          options: venues.map((v) => selectOption(v, v.name)),
+          options: roomOptions,
+          hint: roomOptions.length
+            ? undefined
+            : tr("Primero agrega una sala en Sedes y salas."),
         },
         dateField("starts_at", tr("Inicio")),
         dateField("ends_at", tr("Fin")),
@@ -473,7 +514,7 @@ export function EventsModule({
         },
       ],
       initial: { speaker_ids: [] },
-      submit: async (body) => {
+      submit: async (body: RecordData) => {
         await run(`${selectedPath}/sessions`, "POST", cleanPayload(body));
       },
     });
@@ -617,29 +658,22 @@ export function EventsModule({
               <RefreshCw size={16} className={loading ? "spin" : ""} />{" "}
               {tr("Actualizar")}
             </button>
-            {!isReader && section !== "forms" && (
-              <button
-                className="button primary"
-                onClick={
-                  section === "venues"
-                    ? createVenue
-                    : section === "speakers"
-                      ? createSpeaker
-                      : section === "agenda"
-                        ? createSession
-                        : createEvent
-                }
-              >
-                <Plus size={17} />
-                {section === "venues"
-                  ? tr("Nueva sede")
-                  : section === "speakers"
+            {!isReader &&
+              section !== "forms" &&
+              section !== "venues" &&
+              section !== "agenda" &&
+              section !== "activity" &&
+              section !== "publication" && (
+                <button
+                  className="button primary"
+                  onClick={section === "speakers" ? createSpeaker : createEvent}
+                >
+                  <Plus size={17} />
+                  {section === "speakers"
                     ? tr("Nuevo ponente")
-                    : section === "agenda"
-                      ? tr("Nueva sesión")
-                      : tr("Nuevo evento")}
-              </button>
-            )}
+                    : tr("Nuevo evento")}
+                </button>
+              )}
           </div>
         </div>
 
@@ -679,6 +713,9 @@ export function EventsModule({
         {section === "venues" && (
           <VenuesSection
             venues={venues}
+            isReader={isReader}
+            onCreateVenue={createVenue}
+            onCreateRoom={createRoom}
             setDialog={setDialog}
             run={run}
             archiveResource={archiveResource}
@@ -734,6 +771,7 @@ export function EventsModule({
             selectedPath={selectedPath}
             programs={programs}
             sessions={sessions}
+            venues={venues}
             canWrite={permissions.write}
             isReader={isReader}
             onCreateProgram={createProgram}
@@ -778,9 +816,11 @@ export function EventsModule({
             selected={selected}
             selectedPath={selectedPath}
             isReader={isReader}
+            request={request}
             inspect={inspect}
             setDialog={setDialog}
             run={run}
+            showError={showError}
           />
         )}
 

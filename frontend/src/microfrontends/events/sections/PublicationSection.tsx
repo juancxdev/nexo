@@ -137,6 +137,10 @@ export function PublicationSection({
                       { value: "", label: tr("Versión") },
                       { value: "/manifest", label: tr("Manifiesto") },
                       {
+                        value: "/propagation",
+                        label: tr("Estado de propagación"),
+                      },
+                      {
                         value: "/manifest/artifacts/event",
                         label: tr("Artefacto: evento"),
                       },
