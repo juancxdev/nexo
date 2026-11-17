@@ -3,13 +3,14 @@ import {ChevronDown,ChevronLeft,LogOut,Menu} from 'lucide-react';
 import {Button,IconButton,Modal} from './atoms';
 import {ModuleLink} from './molecules';
 import {useI18n} from '../core/i18n';
+import {translateEvents} from '../core/events-i18n';
 import type {Tenant} from '../core/session';
 import type {MicrofrontendManifest} from '../platform/microfrontends/contracts';
 function initials(name:string){return name.trim().split(/\s+/).map(part=>part[0]).join('').slice(0,2).toUpperCase()}
 export function Sidebar({modules,active,activeRoute,collapsed,onNavigate,onToggle,theme,onTheme,onLogout,tenants,activeTenantId,onTenantChange,profile}:{modules:MicrofrontendManifest[];active:string;activeRoute:string;collapsed:boolean;onNavigate:(path:string)=>void;onToggle:()=>void;theme:'light'|'dark';onTheme:()=>void;onLogout:()=>void;tenants:Tenant[];activeTenantId:string;onTenantChange:(id:string)=>void;profile:{name:string;role:string}}){
  const {t}=useI18n();const [expanded,setExpanded]=useState<Record<string,boolean>>({});const [tenantModalOpen,setTenantModalOpen]=useState(false);const activeTenant=tenants.find(tenant=>tenant.id===activeTenantId)||tenants[0];
  useEffect(()=>{modules.filter(module=>module.children?.some(child=>child.route===activeRoute)).forEach(module=>setExpanded(value=>({...value,[module.id]:true})))},[activeRoute,modules]);
- const moduleName=(module:MicrofrontendManifest)=>module.id==='overview'?t('nav.home'):module.id==='onsite-operations'?t('nav.onsite'):module.name;const childLabel=(id:string,fallback:string)=>id==='onsite-checkin'?t('onsite.checkinTab'):id==='onsite-attendance'?t('onsite.attendanceTab'):id==='onsite-reports'?t('onsite.reportsTab'):fallback;
+ const moduleName=(module:MicrofrontendManifest)=>module.id==='overview'?t('nav.home'):module.id==='onsite-operations'?t('nav.onsite'):module.id==='events'?translateEvents(module.name):module.name;const childLabel=(id:string,fallback:string)=>id==='onsite-checkin'?t('onsite.checkinTab'):id==='onsite-attendance'?t('onsite.attendanceTab'):id==='onsite-reports'?t('onsite.reportsTab'):id.startsWith('events-')?translateEvents(fallback):fallback;
  return <aside className={`nx-sidebar ${collapsed?'is-collapsed':''}`} aria-label={t('nav.main')}>
   {collapsed?<div className="nx-brand nx-brand-collapsed"><IconButton label={t('nav.expand')} className="nx-brand-toggle" onClick={onToggle}><span className="nx-brand-mark">N</span></IconButton></div>:<div className="nx-brand"><span className="nx-brand-mark">N</span><span className="nx-brand-name"><strong>Nexo</strong><small>NEXO PLATFORM</small></span><IconButton label={t('nav.collapse')} onClick={onToggle}><ChevronLeft size={17}/></IconButton></div>}
   {activeTenant&&<button type="button" className="nx-tenant-switcher" data-initials={initials(activeTenant.name)} aria-label={activeTenant.name} onClick={()=>setTenantModalOpen(true)}><span className="nx-tenant-copy"><strong>{activeTenant.name}</strong></span><ChevronDown className="nx-tenant-chevron" size={16}/></button>}

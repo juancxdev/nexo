@@ -46,3 +46,31 @@ npm run build
 npm run test:e2e
 npm run tokens:validate
 ```
+
+## Módulo de configuración de eventos — desarrollo local
+
+El módulo `src/microfrontends/events` se registra bajo `/events` y adapta los flujos del frontend demostrativo de Configuration. La navegación, el contexto, los componentes y los tokens visuales pertenecen al shell Nexo. Incluye eventos, agenda, sedes, ponentes, publicación y actividad para las operaciones disponibles.
+
+**Estado:** el módulo se habilita exclusivamente en el servidor de desarrollo mediante `VITE_EVENTS_DEMO=true`. El shell añade capacidades de eventos para ese modo y el cliente envía `x-dev-actor` a la API local. El actor se elige por separado del tenant del shell. Esto es una demostración y no acredita identidad ni permisos reales. Fuera del modo demo el módulo no recibe esas capacidades simuladas y no envía el actor. La integración con el cliente autenticado y Core sigue pendiente. El artefacto de formularios se construye con datos locales de PostgreSQL; el broker continúa simulado. La integración real de formularios con Participation sigue pendiente.
+
+Para probar en Windows PowerShell, levantar el fixture aislado de la copia local de Configuration. No es la base compartida de Nexo: se usa solo para desarrollo y pruebas, mientras Platform completa `DB-PLATFORM-01`. Para evitar conflictos con Core, se usa un puerto PostgreSQL local distinto:
+
+```powershell
+# En nexo-develop/microservices/event-configuration; copiar .env.example a .env y configurar contraseñas locales
+$env:DB_PORT = '5435'
+docker compose up -d --build
+
+# En nexo-develop/backend; levantar Core y su PostgreSQL
+docker compose up -d --build
+
+# En nexo-develop/frontend
+npm ci
+$env:VITE_EVENTS_DEMO = 'true'
+npm run dev
+```
+
+Abrir `http://localhost:5174`, iniciar sesión o registrar un usuario y tenant en Core, y acceder a **Eventos**. En desarrollo Vite envía `/configuration/v1` a `http://127.0.0.1:3000`. Si la API usa otra URL, establecer `VITE_EVENTS_API_URL` antes de iniciar Vite; la API deberá permitir CORS para ese origen. Para cargar datos ficticios seguir `db/seed/datos-demostracion.sql` en `microservices/event-configuration`, con el procedimiento de su README.
+
+Verificación del módulo: `npm run test`, `npm run tokens:validate`, `npm run build` y `npm run test:e2e:events`. En Windows puede usarse Edge instalado con `$env:EVENTS_BROWSER_CHANNEL='msedge'`; sin esa variable Playwright usa Chromium instalado. La prueba de API real es opcional y requiere `EVENTS_LIVE_API` apuntando a una base de Configuration **aislada con seed**; crea datos en esa base. `npm run test:e2e:shell-check` verifica el shell, Onsite con sus llamadas no disponibles y el acceso denegado sin capability. Las pruebas de otros flujos de Onsite tienen su propio entorno.
+
+**Pendiente técnico:** el cliente y los formularios adaptados todavía conservan `RecordData`/`any` de la demo. Deben sustituirse por modelos y validación de respuestas derivados de los contratos antes de considerar cerrada la calidad del módulo. El build advierte que el bundle principal supera 500 kB.
