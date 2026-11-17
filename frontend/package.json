@@ -8,6 +8,8 @@
     "build": "tsc -b && vite build",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:events": "playwright test --config playwright.events.config.ts",
+    "test:e2e:shell-check": "playwright test --config playwright.shell-check.config.ts",
     "tokens:validate": "node scripts/validate-tokens.mjs"
   },
   "dependencies": {

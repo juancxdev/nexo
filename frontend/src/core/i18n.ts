@@ -27,6 +27,8 @@ const messages = {
     "home.description":
       "Selecciona un módulo para comenzar a operar la organización.",
     "common.back": "Volver al inicio",
+    "common.forbidden": "Sin permisos",
+    "common.forbiddenDescription": "No tienes acceso a este módulo.",
     "common.notFound": "Ruta no encontrada",
     "common.notFoundDescription":
       "Nexo no encontró un módulo para esta dirección.",
@@ -120,6 +122,8 @@ const messages = {
     "home.title": "All your work, connected.",
     "home.description": "Select a module to start operating the organization.",
     "common.back": "Back to home",
+    "common.forbidden": "Access denied",
+    "common.forbiddenDescription": "You do not have access to this module.",
     "common.notFound": "Route not found",
     "common.notFoundDescription":
       "Nexo could not find a module for this address.",
