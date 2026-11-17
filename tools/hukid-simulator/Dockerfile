@@ -1,6 +1,6 @@
 FROM golang:1.27-alpine AS build
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum* ./
 RUN go mod download
 COPY cmd ./cmd
 RUN CGO_ENABLED=0 go build -o /hukid-simulator ./cmd/api
