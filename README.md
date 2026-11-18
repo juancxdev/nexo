@@ -37,10 +37,24 @@ El entorno local usa una única base lógica `nexo`. Core, Onsite, Event Operati
 
 La base compartida no significa compartir tablas: cada servicio conserva la propiedad de su schema, migraciones y repositorios. La comunicación de negocio debe respetar contratos HTTP/eventos y no depender de joins contra tablas privadas de otro servicio.
 
-Para levantar el stack compartido:
+Para levantar el stack compartido desde cero o después de limpiar Docker:
+
+```bash
+./scripts/dev-up.sh
+```
+
+`docker-compose.yml` contiene únicamente contenedores permanentes: una instancia PostgreSQL compartida, Core, cada microservicio, workers e infraestructura local. Las migraciones, el bootstrap y los seeds viven en `docker-compose.init.yml` y se ejecutan como jobs temporales con `docker compose run --rm`; no forman parte del runtime ni quedan como contenedores detenidos.
+
+Para levantar sólo la infraestructura permanente, sin inicializar una base nueva:
 
 ```bash
 docker compose up -d --build
+```
+
+Para reconstruir un único servicio sin tocar los demás:
+
+```bash
+docker compose up -d --build event-configuration-api
 ```
 
 Para operar sólo el módulo de Eventos:

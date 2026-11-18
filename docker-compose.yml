@@ -12,72 +12,9 @@ services:
       interval: 3s
       timeout: 3s
       retries: 20
-  migrate-core:
-    image: migrate/migrate:v4.18.3
-    depends_on: {postgres: {condition: service_healthy}}
-    volumes: [./backend/migrations:/migrations:ro]
-    command: ["-path=/migrations", "-database=postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable&x-migrations-table=core_schema_migrations", "up"]
-  migrate-onsite:
-    image: migrate/migrate:v4.18.3
-    depends_on: {migrate-core: {condition: service_completed_successfully}}
-    volumes: [./microservices/onsite-operations/migrations:/migrations:ro]
-    command: ["-path=/migrations", "-database=postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable&x-migrations-table=onsite_schema_migrations", "up"]
-  seed-onsite:
-    image: postgres:16-alpine
-    depends_on: {migrate-onsite: {condition: service_completed_successfully}}
-    volumes: [./microservices/onsite-operations/seeds:/seeds:ro]
-    entrypoint: ["/bin/sh", "-c"]
-    command: ["psql postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable -f /seeds/demo-day.sql -f /seeds/demo-day-presence.sql"]
-  migrate-operations:
-    image: migrate/migrate:v4.18.3
-    depends_on: {seed-onsite: {condition: service_completed_successfully}}
-    volumes: [./microservices/event-operations/migrations:/migrations:ro]
-    command: ["-path=/migrations", "-database=postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable&x-migrations-table=operations_schema_migrations", "up"]
-  bootstrap-events:
-    build: ./microservices/event-configuration
-    command: ["node", "scripts/bootstrap-shared.mjs"]
-    depends_on: {postgres: {condition: service_healthy}}
-    environment:
-      NEXO_SHARED_DATABASE: "true"
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      POSTGRES_DB: nexo
-      POSTGRES_USER: nexo
-      POSTGRES_PASSWORD: nexo-local-only
-      EVENTS_MIGRATOR_USER: events_migrator
-      EVENTS_MIGRATOR_PASSWORD: events-migrator-local-only
-      APP_DB_USER: configuration_app
-      APP_DB_PASSWORD: configuration-app-local-only
-    restart: "no"
-  migrate-events:
-    build: ./microservices/event-configuration
-    command: ["node", "scripts/migrate.mjs"]
-    depends_on: {bootstrap-events: {condition: service_completed_successfully}}
-    environment:
-      NEXO_SHARED_DATABASE: "true"
-      POSTGRES_HOST: postgres
-      POSTGRES_PORT: "5432"
-      POSTGRES_DB: nexo
-      EVENTS_MIGRATOR_USER: events_migrator
-      EVENTS_MIGRATOR_PASSWORD: events-migrator-local-only
-      APP_DB_USER: configuration_app
-    restart: "no"
-  seed-events:
-    image: postgres:16-alpine
-    depends_on: {migrate-events: {condition: service_completed_successfully}}
-    volumes: [./microservices/event-configuration/db/seed:/seeds:ro]
-    entrypoint: ["/bin/sh", "-c"]
-    command: ["psql postgres://events_migrator:events-migrator-local-only@postgres:5432/nexo?sslmode=disable -f /seeds/datos-demostracion.sql"]
-    restart: "no"
-  seed-operations:
-    image: postgres:16-alpine
-    depends_on: {migrate-operations: {condition: service_completed_successfully}}
-    volumes: [./microservices/event-operations/seeds:/seeds:ro]
-    entrypoint: ["/bin/sh", "-c"]
-    command: ["psql postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable -f /seeds/demo-day-operations.sql"]
   core-api:
     build: ./backend
-    depends_on: {migrate-core: {condition: service_completed_successfully}}
+    depends_on: {postgres: {condition: service_healthy}}
     environment:
       DATABASE_URL: postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable
       NEXO_JWT_ISSUER: http://core-api:8081
@@ -86,7 +23,7 @@ services:
     ports: ["8081:8081"]
   onsite-operations-api:
     build: ./microservices/onsite-operations
-    depends_on: {seed-onsite: {condition: service_completed_successfully}}
+    depends_on: {postgres: {condition: service_healthy}}
     environment:
       APP_ENV: development
       DATABASE_URL: postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable
@@ -97,14 +34,14 @@ services:
     ports: ["8082:8082"]
   event-operations-api:
     build: ./microservices/event-operations
-    depends_on: {seed-operations: {condition: service_completed_successfully}}
+    depends_on: {postgres: {condition: service_healthy}}
     environment:
       DATABASE_URL: postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable
       OPERATIONS_ADDR: :8083
     ports: ["8083:8083"]
   event-configuration-api:
     build: ./microservices/event-configuration
-    depends_on: {seed-events: {condition: service_completed_successfully}}
+    depends_on: {postgres: {condition: service_healthy}}
     environment:
       NODE_ENV: development
       PORT: "3000"
@@ -130,7 +67,7 @@ services:
   event-configuration-worker:
     build: ./microservices/event-configuration
     command: ["node", "apps/configuration-worker/src/main.mjs"]
-    depends_on: {seed-events: {condition: service_completed_successfully}}
+    depends_on: {postgres: {condition: service_healthy}}
     environment:
       NODE_ENV: development
       POSTGRES_HOST: postgres

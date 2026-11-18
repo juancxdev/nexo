@@ -24,7 +24,7 @@ El compose raíz opera una instancia PostgreSQL `nexo` y contenedores separados 
 docker compose up -d --build event-configuration-api event-configuration-worker
 ```
 
-Cada servicio depende de PostgreSQL y de su job de migración para el primer arranque; no debe depender de otro API para mantenerse saludable. Los compose con bases aisladas sólo pueden existir como fixtures explícitos de pruebas y nunca son la ruta normal del proyecto.
+Cada API o worker depende únicamente de PostgreSQL para mantenerse aislado de la caída o reconstrucción de otro servicio. En el arranque completo, `scripts/dev-up.sh` ejecuta primero los jobs de migración/bootstrap/seed desde `docker-compose.init.yml` y los elimina con `--rm`; después levanta los contenedores permanentes definidos en `docker-compose.yml`. Los jobs de inicialización no son microservicios y no deben permanecer ejecutándose. Los compose con bases aisladas sólo pueden existir como fixtures explícitos de pruebas y nunca son la ruta normal del proyecto.
 
 ## Migraciones por servicio
 
