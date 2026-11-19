@@ -7,11 +7,15 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -53,7 +57,7 @@ type refreshRequest struct {
 }
 
 func NewServer(repo ports.Repository) *Server {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	key, err := loadOrCreateSigningKey(os.Getenv("NEXO_JWT_PRIVATE_KEY_PATH"))
 	if err != nil {
 		panic(err)
 	}
@@ -66,6 +70,34 @@ func NewServer(repo ports.Repository) *Server {
 		audience = "nexo-services"
 	}
 	return &Server{Repo: repo, Issuer: issuer, Audience: audience, PrivateKey: key, KeyID: "nexo-dev-1"}
+}
+
+func loadOrCreateSigningKey(path string) (*rsa.PrivateKey, error) {
+	if path != "" {
+		if raw, err := os.ReadFile(path); err == nil {
+			block, _ := pem.Decode(raw)
+			if block == nil {
+				return nil, errors.New("invalid JWT private key PEM")
+			}
+			key, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+			if err != nil {
+				return nil, err
+			}
+			return key, nil
+		}
+	}
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil || path == "" {
+		return key, err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return nil, err
+	}
+	der := x509.MarshalPKCS1PrivateKey(key)
+	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: der}), 0600); err != nil {
+		return nil, err
+	}
+	return key, nil
 }
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -84,14 +116,34 @@ func (s *Server) Handler() http.Handler {
 func withJSON(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
+		if origin := allowedOrigin(r.Header.Get("Origin")); origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Add("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func allowedOrigin(origin string) string {
+	if origin == "" {
+		return ""
+	}
+	configured := os.Getenv("CORS_ALLOWED_ORIGINS")
+	if configured == "" && os.Getenv("APP_ENV") != "production" {
+		configured = "http://localhost:5174,http://127.0.0.1:5174"
+	}
+	for _, candidate := range strings.Split(configured, ",") {
+		if strings.TrimSpace(candidate) == origin {
+			return origin
+		}
+	}
+	return ""
 }
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.WriteHeader(status)
@@ -268,6 +320,10 @@ func (s *Server) tenantContext(w http.ResponseWriter, r *http.Request) {
 	access, err := s.sign(newClaims)
 	if err != nil {
 		errorJSON(w, 500, "token_error", "no se pudo crear el contexto")
+		return
+	}
+	if err = s.Repo.UpdateSessionAccessHash(r.Context(), c.SessionID, hash(access)); err != nil {
+		errorJSON(w, 503, "session_unavailable", "no se pudo actualizar el contexto de sesión")
 		return
 	}
 	writeJSON(w, 200, map[string]any{"access_token": access, "expires_at": newClaims.Expires, "tenant_id": in.TenantID, "role": role, "scopes": newClaims.Scopes})

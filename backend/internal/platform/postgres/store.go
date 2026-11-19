@@ -55,6 +55,16 @@ func (s *Store) FindSessionByRefreshHash(ctx context.Context, hash []byte) (auth
 	err := s.DB.QueryRow(ctx, `SELECT id::text,user_id::text,access_token_hash,refresh_token_hash,expires_at,refresh_expires_at,revoked_at FROM identity.sessions WHERE refresh_token_hash=$1`, hash).Scan(&item.ID, &item.UserID, &item.AccessHash, &item.RefreshHash, &item.ExpiresAt, &item.RefreshUntil, &item.RevokedAt)
 	return item, mapError(err)
 }
+func (s *Store) UpdateSessionAccessHash(ctx context.Context, id string, accessHash []byte) error {
+	result, err := s.DB.Exec(ctx, `UPDATE identity.sessions SET access_token_hash=$2 WHERE id=$1 AND revoked_at IS NULL`, id, accessHash)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return ports.ErrNotFound
+	}
+	return nil
+}
 func (s *Store) RevokeSession(ctx context.Context, id string, at time.Time) error {
 	result, err := s.DB.Exec(ctx, `UPDATE identity.sessions SET revoked_at=$2 WHERE id=$1 AND revoked_at IS NULL`, id, at)
 	if err != nil {

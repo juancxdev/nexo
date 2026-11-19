@@ -102,6 +102,16 @@ func TestTenantContextGrantsEventScopesForOwner(t *testing.T) {
 	if claims.TenantID != created.Tenant.ID {
 		t.Fatalf("token tenant=%q want=%q", claims.TenantID, created.Tenant.ID)
 	}
+	sidebar := httptest.NewRecorder()
+	sidebarRequest := httptest.NewRequest(http.MethodGet, "/v1/navigation/sidebar?tenant_id="+created.Tenant.ID, nil)
+	sidebarRequest.Header.Set("Authorization", "Bearer "+payload.AccessToken)
+	handler.ServeHTTP(sidebar, sidebarRequest)
+	if sidebar.Code != http.StatusOK {
+		t.Fatalf("sidebar with tenant context status=%d body=%s", sidebar.Code, sidebar.Body.String())
+	}
+	if !bytes.Contains(sidebar.Body.Bytes(), []byte(`"id":"events"`)) {
+		t.Fatalf("sidebar does not include events module: %s", sidebar.Body.String())
+	}
 }
 
 func TestUnknownRoleDoesNotReceiveEventScopes(t *testing.T) {
