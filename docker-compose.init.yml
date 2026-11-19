@@ -51,3 +51,8 @@ services:
     volumes: [./microservices/event-operations/seeds:/seeds:ro]
     entrypoint: ["/bin/sh", "-c"]
     command: ["psql postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable -f /seeds/demo-day-operations.sql"]
+  bootstrap-runtime-roles:
+    image: postgres:16-alpine
+    volumes: [./scripts/bootstrap-runtime-roles.sql:/bootstrap.sql:ro]
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["psql postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable -v ON_ERROR_STOP=1 -f /bootstrap.sql"]

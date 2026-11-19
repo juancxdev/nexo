@@ -7,9 +7,9 @@ cd "$ROOT_DIR"
 dc=(docker compose -f docker-compose.yml)
 init=(docker compose -f docker-compose.yml -f docker-compose.init.yml)
 
-"${dc[@]}" up -d postgres
+"${dc[@]}" up -d --wait --wait-timeout 120 postgres
 
-for job in migrate-core migrate-onsite seed-onsite migrate-operations bootstrap-events migrate-events seed-events seed-operations; do
+for job in migrate-core migrate-onsite seed-onsite migrate-operations bootstrap-events migrate-events seed-events seed-operations bootstrap-runtime-roles; do
   "${init[@]}" run --rm --no-deps "$job"
 done
 

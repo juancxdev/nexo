@@ -25,7 +25,7 @@ nexo/
 
 ## Estado
 
-La base frontend y el Core API inicial ya están implementados. El frontend usa sesión mock temporalmente; el adaptador de sesión real contra el Core API queda como siguiente integración. Los módulos de eventos, CMS, check-in, reportes y HukID permanecen fuera del Core API.
+La base frontend y el Core API están integrados con PostgreSQL. Los mocks se conservan únicamente para pruebas aisladas y E2E controlados; el flujo principal usa login, contexto de tenant y JWT reales. Los módulos de eventos, CMS, check-in, reportes y HukID permanecen separados del Core API.
 
 ## Integración de equipos
 
@@ -45,13 +45,46 @@ Para levantar el stack compartido desde cero o después de limpiar Docker:
 
 `docker-compose.yml` contiene únicamente contenedores permanentes: una instancia PostgreSQL compartida, Core, cada microservicio, workers e infraestructura local. Las migraciones, el bootstrap y los seeds viven en `docker-compose.init.yml` y se ejecutan como jobs temporales con `docker compose run --rm`; no forman parte del runtime ni quedan como contenedores detenidos.
 
+El arranque completo es excepcional: se usa para una máquina nueva o una base recién creada. Un cambio de un grupo se despliega de forma selectiva, sin detener ni reconstruir los demás contenedores y sin volver a ejecutar seeds:
+
+```bash
+make deploy-core        # Core API
+make deploy-onsite      # Onsite Operations API
+make deploy-operations  # Event Operations API
+make deploy-events      # Event Configuration API + Worker
+make deploy-hukid       # Simulador HukID
+```
+
+Cada comando aplica sólo las migraciones de su bounded context y recrea únicamente el contenedor o los contenedores de ese dominio. La base PostgreSQL compartida y el resto del stack permanecen operativos.
+
+Los jobs de inicialización crean roles de runtime sin privilegios elevados (`core_app`, `onsite_app` y `operations_app`) y conceden acceso únicamente a sus schemas. El usuario `nexo` queda reservado para migraciones/bootstrap local y no debe utilizarse como credencial de una API en staging o producción. Después de modificar privilegios o una base limpia, ejecutar nuevamente:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.init.yml run --rm --no-deps bootstrap-runtime-roles
+```
+
+Las APIs aceptan CORS únicamente para los orígenes listados en `CORS_ALLOWED_ORIGINS`. En producción esta variable debe ser obligatoria y los valores locales del compose deben reemplazarse por secretos gestionados.
+
+Para validar Equipo 2 desde un entorno limpio:
+
+```bash
+bash .github/scripts/test-event-configuration-compose.sh
+```
+
+Para el frontend de Eventos:
+
+```bash
+cd frontend
+npm run test:e2e:events
+```
+
 Para levantar sólo la infraestructura permanente, sin inicializar una base nueva:
 
 ```bash
 docker compose up -d --build
 ```
 
-Para reconstruir un único servicio sin tocar los demás:
+Como alternativa directa, para reconstruir un único servicio sin tocar los demás:
 
 ```bash
 docker compose up -d --build event-configuration-api

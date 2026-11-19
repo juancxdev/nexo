@@ -33,7 +33,10 @@ func New(db *pgxpool.Pool) *Server {
 func (s *Server) routes() {
 	a := s.App
 	a.Use(func(c fiber.Ctx) error {
-		c.Set("Access-Control-Allow-Origin", "*")
+		if origin := allowedOrigin(c.Get("Origin")); origin != "" {
+			c.Set("Access-Control-Allow-Origin", origin)
+			c.Set("Vary", "Origin")
+		}
 		c.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Mock-Tenant, X-Mock-Actor")
 		c.Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 		if c.Method() == "OPTIONS" {
@@ -58,6 +61,22 @@ func (s *Server) routes() {
 	a.Post("/operations/v1/certificates/:id/hukid-deliveries", s.private("certificates:issue"), s.createDelivery)
 	a.Get("/operations/v1/certificates/:id/hukid-deliveries", s.private("certificates:issue"), s.getDelivery)
 	a.Get("/public/v1/certificates/:code", s.verifyCertificate)
+}
+
+func allowedOrigin(origin string) string {
+	if origin == "" {
+		return ""
+	}
+	configured := os.Getenv("CORS_ALLOWED_ORIGINS")
+	if configured == "" && os.Getenv("APP_ENV") != "production" {
+		configured = "http://localhost:5174,http://127.0.0.1:5174"
+	}
+	for _, candidate := range strings.Split(configured, ",") {
+		if strings.TrimSpace(candidate) == origin {
+			return origin
+		}
+	}
+	return ""
 }
 func tenant(c fiber.Ctx) string {
 	if v, ok := c.Locals("tenant_id").(string); ok && v != "" {
@@ -103,7 +122,7 @@ func (s *Server) private(scope string) fiber.Handler {
 type bearerClaims struct {
 	Issuer, Audience, Subject, TenantID string
 	Scopes                              []string
-	Expires                             int64
+	IssuedAt, NotBefore, Expires        int64
 }
 
 func hasScope(scopes []string, wanted string) bool {
@@ -126,14 +145,26 @@ func verifyBearer(header string) (bearerClaims, error) {
 		}
 		return json.Unmarshal(b, out)
 	}
-	var h struct{ Alg, Kid string }
-	var p struct {
-		Issuer, Audience, Subject, TenantID string
-		Scopes                              []string `json:"scopes"`
-		Expires                             int64    `json:"exp"`
+	var h struct {
+		Alg string `json:"alg"`
+		Kid string `json:"kid"`
 	}
-	if decode(parts[0], &h) != nil || decode(parts[1], &p) != nil || h.Alg != "RS256" || p.Expires <= time.Now().Unix() {
+	var p struct {
+		Issuer    string   `json:"iss"`
+		Audience  string   `json:"aud"`
+		Subject   string   `json:"sub"`
+		TenantID  string   `json:"tenant_id"`
+		Scopes    []string `json:"scopes"`
+		IssuedAt  int64    `json:"iat"`
+		NotBefore int64    `json:"nbf"`
+		Expires   int64    `json:"exp"`
+	}
+	now := time.Now().Unix()
+	if decode(parts[0], &h) != nil || decode(parts[1], &p) != nil || h.Alg != "RS256" || h.Kid == "" || p.Expires <= now || p.Subject == "" || uuid.Validate(p.Subject) != nil || uuid.Validate(p.TenantID) != nil {
 		return bearerClaims{}, errors.New("invalid token")
+	}
+	if p.NotBefore != 0 && p.NotBefore > now+30 {
+		return bearerClaims{}, errors.New("token not active")
 	}
 	if expected := os.Getenv("NEXO_JWT_ISSUER"); expected != "" && p.Issuer != expected {
 		return bearerClaims{}, errors.New("issuer mismatch")
@@ -183,7 +214,7 @@ func verifyBearer(header string) (bearerClaims, error) {
 	if rsa.VerifyPKCS1v15(pub, crypto.SHA256, sum[:], sig) != nil {
 		return bearerClaims{}, errors.New("invalid signature")
 	}
-	return bearerClaims{Issuer: p.Issuer, Audience: p.Audience, Subject: p.Subject, TenantID: p.TenantID, Scopes: p.Scopes, Expires: p.Expires}, nil
+	return bearerClaims{Issuer: p.Issuer, Audience: p.Audience, Subject: p.Subject, TenantID: p.TenantID, Scopes: p.Scopes, IssuedAt: p.IssuedAt, NotBefore: p.NotBefore, Expires: p.Expires}, nil
 }
 func (s *Server) createReport(c fiber.Ctx) error {
 	var b struct {
@@ -197,8 +228,11 @@ func (s *Server) createReport(c fiber.Ctx) error {
 	if b.Format == "" {
 		b.Format = "csv"
 	}
+	if b.Format != "csv" && b.Format != "json" {
+		return problem(c, 400, "invalid_format", "format debe ser csv o json")
+	}
 	id := uuid.New()
-	_, err := s.DB.Exec(c.Context(), `INSERT INTO operations.report_jobs(id,tenant_id,requested_by,event_id,scope,format) VALUES($1,$2::uuid,$3::uuid,$4,$5,$6)`, id, tenant(c), actor(c), b.EventID, b.Scope, b.Format)
+	_, err := s.DB.Exec(c.Context(), `INSERT INTO operations.report_jobs(id,tenant_id,requested_by,event_id,scope,format,status) VALUES($1,$2::uuid,$3::uuid,$4,$5,$6,'pending')`, id, tenant(c), actor(c), b.EventID, b.Scope, b.Format)
 	if err != nil {
 		return problem(c, 503, "persistence_unavailable", err.Error())
 	}

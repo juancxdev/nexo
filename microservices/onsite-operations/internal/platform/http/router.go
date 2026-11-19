@@ -141,6 +141,7 @@ func verifyBearer(header string) (ports.Claims, error) {
 		Scopes    []string `json:"scopes"`
 		Expires   int64    `json:"exp"`
 		IssuedAt  int64    `json:"iat"`
+		NotBefore int64    `json:"nbf"`
 	}
 	decodePart := func(v string, out any) error {
 		b, e := base64.RawURLEncoding.DecodeString(v)
@@ -154,6 +155,9 @@ func verifyBearer(header string) (ports.Claims, error) {
 	}
 	if p.Expires <= time.Now().Unix() {
 		return ports.Claims{}, errors.New("expired token")
+	}
+	if p.NotBefore != 0 && p.NotBefore > time.Now().Unix()+30 {
+		return ports.Claims{}, errors.New("token not active")
 	}
 	expectedIssuer := os.Getenv("NEXO_JWT_ISSUER")
 	if expectedIssuer != "" && p.Issuer != expectedIssuer {
@@ -221,7 +225,10 @@ func (r *Router) ensureAssignment(c fiber.Ctx, event, scope string) error {
 func (r *Router) routes() {
 	a := r.App
 	a.Use(func(c fiber.Ctx) error {
-		c.Set("Access-Control-Allow-Origin", "*")
+		if origin := allowedOrigin(c.Get("Origin")); origin != "" {
+			c.Set("Access-Control-Allow-Origin", origin)
+			c.Set("Vary", "Origin")
+		}
 		c.Set("Access-Control-Allow-Headers", "Content-Type, Idempotency-Key, X-Mock-Role, X-Mock-Actor, X-Mock-Tenant, X-Mock-Device, X-Request-Id")
 		c.Set("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS")
 		if c.Method() == "OPTIONS" {
@@ -252,6 +259,22 @@ func (r *Router) routes() {
 	a.Post("/onsite/v1/attendance/facts/:id/voids", r.auth("onsite:void"), r.voidFact)
 	a.Get("/onsite/v1/attendance", r.auth("onsite:read"), r.list)
 	a.Get("/onsite/v1/dashboard", r.auth("onsite:read"), r.dashboard)
+}
+
+func allowedOrigin(origin string) string {
+	if origin == "" {
+		return ""
+	}
+	configured := os.Getenv("CORS_ALLOWED_ORIGINS")
+	if configured == "" && os.Getenv("APP_ENV") != "production" {
+		configured = "http://localhost:5174,http://127.0.0.1:5174"
+	}
+	for _, candidate := range strings.Split(configured, ",") {
+		if strings.TrimSpace(candidate) == origin {
+			return origin
+		}
+	}
+	return ""
 }
 
 func (r *Router) listDevices(c fiber.Ctx) error {

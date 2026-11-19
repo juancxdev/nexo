@@ -219,14 +219,17 @@ func (s *Store) Void(ctx context.Context, factID, reason, bodyHash string, c por
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return domain.AttendanceFact{}, err
 	}
-	var eventUUID, scopeUUID string
+	var eventUUID, scopeUUID, originalType string
 	var ticketID string
-	err = tx.QueryRow(ctx, `SELECT f.ticket_id,f.event_id::text,f.scope_id::text,e.source_event_id,s.code FROM onsite.attendance_facts f JOIN onsite.events e ON e.id=f.event_id JOIN onsite.scopes s ON s.id=f.scope_id WHERE f.id=$1 AND e.tenant_id=$2 FOR UPDATE`, factID, c.TenantID).Scan(&ticketID, &eventUUID, &scopeUUID, &out.EventID, &out.Scope)
+	err = tx.QueryRow(ctx, `SELECT f.ticket_id,f.event_id::text,f.scope_id::text,f.type,e.source_event_id,s.code FROM onsite.attendance_facts f JOIN onsite.events e ON e.id=f.event_id JOIN onsite.scopes s ON s.id=f.scope_id WHERE f.id=$1 AND e.tenant_id=$2 FOR UPDATE`, factID, c.TenantID).Scan(&ticketID, &eventUUID, &scopeUUID, &originalType, &out.EventID, &out.Scope)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.AttendanceFact{}, domain.ErrInvalidState
 	}
 	if err != nil {
 		return domain.AttendanceFact{}, err
+	}
+	if originalType == "void" {
+		return domain.AttendanceFact{}, domain.ErrInvalidState
 	}
 	out.ID = uuid.NewString()
 	out.TicketID = ticketID
@@ -360,7 +363,10 @@ func (s *Store) CreateShift(ctx context.Context, sh domain.Shift, c ports.Claims
 	return sh, err
 }
 func (s *Store) CloseShift(ctx context.Context, id string, c ports.Claims) error {
-	_, err := s.Pool.Exec(ctx, `UPDATE onsite.shifts SET status='closed',closed_at=now() WHERE id=$1 AND tenant_id=$2::uuid AND actor_id=$3::uuid AND status='open'`, id, c.TenantID, c.ActorID)
+	tag, err := s.Pool.Exec(ctx, `UPDATE onsite.shifts SET status='closed',closed_at=now() WHERE id=$1 AND tenant_id=$2::uuid AND actor_id=$3::uuid AND status='open'`, id, c.TenantID, c.ActorID)
+	if err == nil && tag.RowsAffected() != 1 {
+		return pgx.ErrNoRows
+	}
 	return err
 }
 
