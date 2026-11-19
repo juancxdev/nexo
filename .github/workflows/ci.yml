@@ -70,5 +70,15 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: stable
-      - name: Validate all Go microservices
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.20.0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: microservices/event-configuration/pnpm-lock.yaml
+      - name: Validate all microservices
         run: bash .github/scripts/test-microservices.sh
+      - name: Smoke test Event Configuration central compose
+        run: bash .github/scripts/test-event-configuration-compose.sh

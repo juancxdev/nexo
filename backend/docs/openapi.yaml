@@ -10,6 +10,26 @@ paths:
     get:
       responses:
         '200': { description: Servicio disponible }
+  /.well-known/jwks.json:
+    get:
+      responses:
+        '200': { description: Claves públicas de firma JWT activas y en transición }
+  /internal/v1/security/signing-keys/rotations:
+    post:
+      summary: Rotar la clave de firma JWT (operación interna)
+      parameters:
+        - { name: X-Nexo-Rotation-Token, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                transition_window_seconds: { type: integer, minimum: 300, maximum: 172800 }
+      responses:
+        '201': { description: Nueva clave activa; la anterior queda publicada durante la transición }
+        '401': { description: Operación no autorizada }
   /v1/auth/register:
     post:
       requestBody:

@@ -22,9 +22,9 @@ export function loadWorkerConfig(env) {
 
 export function loadDatabaseConfig(env) {
   return {
-    host: env.POSTGRES_HOST || 'db',
+    host: env.POSTGRES_HOST || 'postgres',
     port: Number(env.POSTGRES_PORT || 5432),
-    database: env.POSTGRES_DB || 'event_configuration',
+    database: env.POSTGRES_DB || 'nexo',
     user: env.POSTGRES_USER || 'configuration_app',
     password: env.POSTGRES_PASSWORD,
     options: '-c search_path=events,public',

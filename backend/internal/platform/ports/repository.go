@@ -19,6 +19,7 @@ type Repository interface {
 	CreateSession(context.Context, auth.Session) error
 	FindSession(context.Context, string) (auth.Session, error)
 	FindSessionByRefreshHash(context.Context, []byte) (auth.Session, error)
+	UpdateSessionAccessHash(context.Context, string, []byte) error
 	RevokeSession(context.Context, string, time.Time) error
 	ListTenants(context.Context, string) ([]tenant.Tenant, error)
 	CreateTenant(context.Context, tenant.Tenant, tenant.Membership) error

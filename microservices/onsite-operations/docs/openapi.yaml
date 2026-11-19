@@ -47,6 +47,41 @@ paths:
         '400': {description: Request inválido, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
         '409': {description: Duplicado o key reutilizada, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
         '422': {description: Ticket no admisible, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+  /onsite/v1/attendance/check-outs:
+    post:
+      tags: [Onsite]
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CheckInRequest'}}}}
+      responses:
+        '201': {description: Salida registrada, content: {application/json: {schema: {$ref: '#/components/schemas/AttendanceFact'}}}}
+        '409': {description: No presente o idempotency conflict, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+  /onsite/v1/attendance/facts/{id}/voids:
+    post:
+      tags: [Onsite]
+      parameters: [{$ref: '#/components/parameters/FactId'}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/VoidRequest'}}}}
+      responses:
+        '201': {description: Hecho compensatorio, content: {application/json: {schema: {$ref: '#/components/schemas/AttendanceFact'}}}}
+        '403': {description: Scope insuficiente, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+  /onsite/v1/devices:
+    get:
+      tags: [Onsite]
+      responses: {'200': {description: Dispositivos del tenant, content: {application/json: {schema: {type: object, properties: {items: {type: array, items: {$ref: '#/components/schemas/Device'}}}}}}}}
+    post:
+      tags: [Onsite]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceCreate'}}}}
+      responses: {'201': {description: Dispositivo registrado, content: {application/json: {schema: {$ref: '#/components/schemas/Device'}}}}}
+  /onsite/v1/devices/{id}/revocations:
+    post:
+      tags: [Onsite]
+      parameters: [{$ref: '#/components/parameters/FactId'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/VoidRequest'}}}}
+      responses: {'204': {description: Dispositivo revocado}}
+  /onsite/v1/shifts:
+    post:
+      tags: [Onsite]
+      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [event_id, scope], properties: {event_id: {type: string}, scope: {type: string}}}}}}
+      responses: {'201': {description: Turno abierto}}
   /onsite/v1/attendance:
     get:
       tags: [Onsite]
@@ -68,6 +103,7 @@ components:
     Scope: {name: scope, in: query, required: true, schema: {type: string, minLength: 1}, example: main}
     Query: {name: q, in: query, required: true, schema: {type: string, minLength: 4}, example: DEMO-2026-001}
     IdempotencyKey: {name: Idempotency-Key, in: header, required: true, schema: {type: string, format: uuid}}
+    FactId: {name: id, in: path, required: true, schema: {type: string, format: uuid}}
   schemas:
     HealthResponse: {type: object, required: [status], properties: {status: {type: string, example: ok}, database: {type: string, example: ready}}}
     CheckInRequest: {type: object, required: [ticket_id, event_id, scope], properties: {ticket_id: {type: string, example: DEMO-2026-001}, event_id: {type: string, example: event-demo}, scope: {type: string, example: main}}}
@@ -76,4 +112,7 @@ components:
     AttendancePage: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/AttendanceFact'}}, next_cursor: {type: string, nullable: true}}}
     Dashboard: {type: object, required: [registered, confirmed, present, attendance_rate], properties: {registered: {type: integer}, confirmed: {type: integer}, present: {type: integer}, attendance_rate: {type: number, format: double}}}
     Readiness: {type: object, required: [ready, event_id, scope, device_id], properties: {ready: {type: boolean}, event_id: {type: string}, scope: {type: string}, device_id: {type: string}}}
+    VoidRequest: {type: object, required: [reason], properties: {reason: {type: string, minLength: 1, maxLength: 500}}}
+    DeviceCreate: {type: object, required: [label], properties: {label: {type: string}, venue_id: {type: string}, public_key: {type: string}, release_version: {type: string}}}
+    Device: {type: object, required: [id, tenant_id, label, status], properties: {id: {type: string, format: uuid}, tenant_id: {type: string, format: uuid}, label: {type: string}, status: {type: string, enum: [active, revoked]}, venue_id: {type: string}, release_version: {type: string}, last_seen_at: {type: string, format: date-time, nullable: true}}}
     Problem: {type: object, required: [type, title, status, code, detail, trace_id], properties: {type: {type: string}, title: {type: string}, status: {type: integer}, code: {type: string}, detail: {type: string}, trace_id: {type: string}}}

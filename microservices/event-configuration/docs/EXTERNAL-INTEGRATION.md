@@ -8,7 +8,7 @@ Este documento consolida **todos los puntos de acoplamiento externo** del micros
 
 | Equipo | Nombre Oficial en Arquitectura | Rol frente al Equipo 2 (`Event Configuration`) |
 | :--- | :--- | :--- |
-| **Equipo 1** | **Content & Platform Foundation** | **Proveedor de Plataforma** (Core API de Identidad/JWT, Membresías, Directorio de Tenants, PostgreSQL compartido `DB-PLATFORM-01`, Broker de eventos, React Admin Shell `AppShell`, Sitios `site_id` y Servicio de Medios) y **Consumidor de Dominio** (CMS y Public Read API `/public/v1/*` que proyectan el catálogo público de eventos y agendas). |
+| **Equipo 1** | **Content & Platform Foundation** | **Proveedor de Plataforma** (Core API de Identidad/JWT, Membresías, Directorio de Tenants, PostgreSQL compartido `nexo`, Broker de eventos, React Admin Shell `AppShell`, Sitios `site_id` y Servicio de Medios) y **Consumidor de Dominio** (CMS y Public Read API `/public/v1/*` que proyectan el catálogo público de eventos y agendas). |
 | **Equipo 2** | **Event Configuration** *(Este equipo)* | **Dueño y Productor** de `/configuration/v1/*`, schema PostgreSQL `events`, `configuration-worker` (Outbox Relay), manifiestos/artefactos inmutables de publicación (`event`, `schedule`, `forms`) y microfrontend administrativo `events`. |
 | **Equipo 3** | **Participation** | **Consumidor de Dominio** de releases publicados (`forms`, `event` / `registration_policy`) y eventos de cancelación/cierre. Es el **único dueño** de inscripciones, control transaccional de cupos/waitlist, emisión/revocación de tickets QR JWS, postulaciones y respuestas con PII cifrada. |
 | **Equipo 4** | **Onsite Operations** | **Consumidor de Dominio** de releases publicados (`schedule`, `event`) y eventos de cancelación/cambio de agenda. Opera **dos subsistemas**: **(1) Onsite Check-in** (`/onsite/v1/*`, validación QR y hechos append-only de asistencia) y **(2) Operations** (Communications Worker para correos/notificaciones, Reporting/Certificates API y adaptador outbound hacia HukID). |
@@ -18,7 +18,7 @@ Este documento consolida **todos los puntos de acoplamiento externo** del micros
 flowchart LR
   subgraph Team1["Equipo 1 — Content & Platform Foundation"]
     CoreAuth["Platform Core (OIDC/JWT + Membresías + Tenants)"]
-    SharedDB["PostgreSQL Compartido (DB-PLATFORM-01)"]
+    SharedDB["PostgreSQL compartido (nexo; schema events)"]
     Shell["React Admin Shell (AppShell + ModuleContext)"]
     Broker["Message Broker (Outbox Bus)"]
     CMSMedia["CMS Sites (site_id) & Media Uploads"]
@@ -66,11 +66,11 @@ flowchart LR
 
 | # | Integración | Equipo Externo Responsable | Dirección | Punto Exacto en `event-configuration` | Estado Actual |
 | :-: | :--- | :--- | :---: | :--- | :--- |
-| **1** | **Identidad, Sesión y Autorización (`CLAIMS_PROVIDER`)** | **Equipo 1** — Content & Platform Foundation | Equipo 1 → Equipo 2 | `apps/configuration-api/src/shared/auth/auth.guard.ts` y `claims-selection.ts` | **Puerto preparado; simulado en dev (`AUTH_MODE=mock`).** |
+| **1** | **Identidad, Sesión y Autorización (`CLAIMS_PROVIDER`)** | **Equipo 1** — Content & Platform Foundation | Equipo 1 → Equipo 2 | `apps/configuration-api/src/shared/auth/auth.guard.ts` y `claims-selection.ts` | **Integrado con JWKS de Nexo Core (`AUTH_MODE=nexo_jwks`); el modo mock queda limitado a desarrollo y pruebas.** |
 | **2** | **Validación de Membresías Activas (`MEMBERSHIP_READER`)** | **Equipo 1** — Content & Platform Foundation | Equipo 1 → Equipo 2 | `apps/configuration-api/src/events/domain/ports/membership-reader.port.ts` y `membership-selection.ts` | **Puerto preparado; simulado en dev (`MEMBERSHIP_MODE=mock`).** |
-| **3** | **PostgreSQL Compartido (`DB-PLATFORM-01`) y Discovery de Tenants** | **Equipo 1** — Content & Platform Foundation | Equipo 1 → Equipo 2 | `apps/configuration-api/src/shared/database/database.service.ts`, `db/nexo-migrations/` y `WORKER_TENANT_IDS` en `worker-config.mjs` | **Preparado en schema `events` con RLS; falta provisión común y discovery de tenants.** |
+| **3** | **PostgreSQL Compartido (`nexo`) y Discovery de Tenants** | **Equipo 1** — Content & Platform Foundation | Equipo 1 → Equipo 2 | `apps/configuration-api/src/shared/database/database.service.ts`, `db/nexo-migrations/` y `WORKER_TENANT_IDS` en `worker-config.mjs` | **Integrado en la base única `nexo`: schema `events`, RLS y roles `events_migrator`/`configuration_app`. El discovery dinámico de tenants para el worker sigue pendiente del contrato de plataforma.** |
 | **4** | **Eventos de Ciclo de Vida de Organización y Membresía** | **Equipo 1** — Content & Platform Foundation | Equipo 1 → Equipo 2 | `platform.organization.lifecycle_changed.v1` y `platform.membership.changed.v1` | **Definido en catálogo de arquitectura; consumidor pendiente.** |
-| **5** | **Shell React (`ModuleContext`) y Cliente HTTP (`EventsTransport`)** | **Equipo 1** — Content & Platform Foundation | Equipo 1 → Equipo 2 | `frontend/src/microfrontends/events/EventsModule.tsx`, `api.ts` y `capabilities.ts` | **Preparado e integrado en `frontend/`; falta inyección de transporte autenticado del Shell.** |
+| **5** | **Shell React (`ModuleContext`) y Cliente HTTP (`EventsTransport`)** | **Equipo 1** — Content & Platform Foundation | Equipo 1 → Equipo 2 | `frontend/src/microfrontends/events/EventsModule.tsx`, `api.ts` y `capabilities.ts` | **Integrado en `frontend/`; el Shell obtiene un token contextual por tenant antes de consumir `/configuration/v1/*`.** |
 | **6** | **Sitios (`site_id`), Medios de Ponentes y Consentimiento** | **Equipo 1** — Content & Platform Foundation *(+ Privacy Owner)* | Equipo 1 ↔ Equipo 2 | `site_id` en `events`, `media` y `GET /configuration/v1/speakers/consent-notice` (`SPEAKER_CONSENT_NOTICE_*`) | **Endpoint y validación listos; falta acuerdo de referencias con CMS/Medios.** |
 | **7** | **Broker de Mensajería y Entrega desde Outbox (`OutboxRelay`)** | **Equipo 1** — Plataforma del Broker *(Consumidores: Equipos 1, 3 y 4)* | Equipo 2 → Broker | `apps/configuration-worker/src/main.mjs`, `outbox-relay.mjs` y `simulated-broker.mjs` | **Relay transaccional con leases listo; broker simulado (`BROKER_MODE=simulator`).** |
 | **8** | **Consumo de Releases para Catálogo y Páginas Públicas** | **Equipo 1** — Content & Platform Foundation (CMS / Public Read API) | Equipo 2 → Equipo 1 | Evento `configuration.event.release_published.v1` + `GET .../manifest/artifacts/event` y `schedule` | **Manifiesto, hashes RFC 8785 y endpoints listos.** |
@@ -130,14 +130,13 @@ El **Equipo 1** concentra tanto la base de plataforma (**Platform Foundation / C
   - Si `MEMBERSHIP_MODE` no está configurado con un proveedor real en producción, `UnavailableMembershipReader` responde `503 Service Unavailable` (fail-closed).
   - Adicionalmente, según `EVENT-CONTRACTS.md`, el **Equipo 1** emite `platform.membership.changed.v1` y `platform.organization.lifecycle_changed.v1` para que los servicios invaliden membresías revocadas o bloqueen tenants suspendidos.
 
-### 3.3 PostgreSQL Compartido (`DB-PLATFORM-01`) y Discovery de Tenants para el Worker
+### 3.3 PostgreSQL Compartido y Discovery de Tenants para el Worker
 - **Archivos en Equipo 2:**
   - Conexión y verificación RLS: `apps/configuration-api/src/shared/database/database.service.ts`
   - Migraciones listas para Nexo: `db/nexo-migrations/0001..0008_*.sql` y `scripts/migrate.mjs`
   - Configuración del Worker: `apps/configuration-worker/src/infrastructure/config/worker-config.mjs`
-- **Puntos que el Equipo 1 debe provisionar / acordar:**
-  1. Crear el schema `events` y las tablas de control en `platform_meta` (`platform_meta.events_schema_migrations` y `platform_meta.events_migration_checksums`), otorgando rol de migrador (`events_migrator`) y rol de ejecución restringido (`configuration_app` con `NOSUPERUSER NOBYPASSRLS`). **Importante:** nunca ejecutar `scripts/bootstrap-local.mjs` contra la base compartida `nexo`.
-  2. Reemplazar la variable manual `WORKER_TENANT_IDS` del worker por el mecanismo autorizado de discovery de tenants activos del **Equipo 1**.
+- **Estado de plataforma:** el compose raíz provisiona idempotentemente el schema `events`, la metadata `platform_meta.events_*`, `events_migrator` y `configuration_app`. El bootstrap compartido es `scripts/bootstrap-shared.mjs`; `compose.fixture.yaml` no debe usarse contra `nexo`.
+- **Pendiente de contrato:** reemplazar la variable manual `WORKER_TENANT_IDS` por el mecanismo autorizado de discovery de tenants activos del Core.
 
 ### 3.4 Integración del Microfrontend en el Shell React (`AppShell`)
 - **Archivos en Equipo 2:**
@@ -155,7 +154,7 @@ El **Equipo 1** concentra tanto la base de plataforma (**Platform Foundation / C
     transport?: EventsTransport;
   })
   ```
-  - Cuando el **Equipo 1** publique el cliente HTTP autenticado del Shell (con inyección de `Authorization: Bearer <access_token>` y renovación de sesión), debe pasarlo en la prop `transport` desde `ModuleLoader` en `frontend/src/shell/AppShell.tsx` y devolver el ítem `events` con sus capabilities reales en `/v1/navigation/sidebar`.
+  - El Shell ya inyecta `Authorization: Bearer <access_token>` y el tenant activo. La API valida el JWT RS256 con JWKS de Core; una siguiente iteración puede centralizar el transporte como cliente HTTP compartido sin cambiar el contrato del módulo.
 
 ### 3.5 Sitios (`site_id`), Medios de Ponentes y Consumo desde CMS / Public Read API
 1. **Sitios (`site_id`) y Medios:**

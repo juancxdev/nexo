@@ -6,6 +6,10 @@ const TENANT_B = '0194eb00-0000-7000-8000-000000000002';
 test.beforeEach(async ({page})=>{
   await page.addInitScript(({tenantA,tenantB})=>sessionStorage.setItem('nexo.session',JSON.stringify({access_token:'nexo-jwt-test',refresh_token:'test',expires_at:4102444800,profile:{id:'0194eb00-0000-7000-9000-000000000001',name:'Owner',email:'owner@example.test'},tenants:[{id:tenantA,name:'Organización A',slug:'org-a',created_at:'2026-01-01T00:00:00Z'},{id:tenantB,name:'Organización B',slug:'org-b',created_at:'2026-01-01T00:00:00Z'}]})),{tenantA:TENANT_A,tenantB:TENANT_B});
   await page.route('**/v1/navigation/sidebar**',route=>route.fulfill({json:{items:[{id:'overview',capabilities:[]},{id:'onsite-operations',capabilities:['onsite:read']},{id:'events',capabilities:['events:read','events:write','events:publish']}],role:'owner'}}));
+  await page.route('**/v1/auth/tenant-context',async route=>{
+    const body=JSON.parse(route.request().postData()||'{}');
+    return route.fulfill({json:{access_token:`nexo-jwt-${body.tenant_id}`,expires_at:4102444800,tenant_id:body.tenant_id,role:'owner',scopes:['events:read','events:write','events:publish']}});
+  });
   await page.route('**/configuration/v1/**',async route=>{
     const request=route.request();const url=new URL(request.url());
     if(url.pathname.endsWith('/events')&&request.method()==='POST')return route.fulfill({status:201,json:{id:'e1'}});

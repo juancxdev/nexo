@@ -9,6 +9,14 @@ import (
 type Service struct {
 	Tickets    ports.TicketRepository
 	Attendance ports.AttendanceRepository
+	Devices    ports.DeviceRepository
+}
+
+func (s Service) CheckOut(ctx context.Context, fact domain.AttendanceFact, bodyHash string, claims ports.Claims, key string) (domain.AttendanceFact, error) {
+	return s.Attendance.CheckOut(ctx, fact, bodyHash, claims, key)
+}
+func (s Service) Void(ctx context.Context, factID, reason, bodyHash string, claims ports.Claims, key string) (domain.AttendanceFact, error) {
+	return s.Attendance.Void(ctx, factID, reason, bodyHash, claims, key)
 }
 
 func (s Service) Search(ctx context.Context, q, event, scope, tenant string) ([]domain.Ticket, error) {

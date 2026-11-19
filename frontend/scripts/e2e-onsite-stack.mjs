@@ -1,12 +1,18 @@
 import {spawn,spawnSync} from 'node:child_process';
 
-const cwd=new URL('../../microservices/onsite-operations/',import.meta.url);
-const directory=cwd.pathname;
-spawnSync('docker',['compose','down','-v'],{cwd:directory,stdio:'inherit'});
-const compose=spawn('docker',['compose','up','-d','--build'],{cwd:directory,stdio:'inherit'});
+const root=new URL('../../',import.meta.url).pathname;
+const composeArgs=['compose','-p','nexo-frontend-e2e','-f','docker-compose.yml','-f','docker-compose.e2e.yml'];
+const initArgs=['compose','-p','nexo-frontend-e2e','-f','docker-compose.yml','-f','docker-compose.e2e.yml','-f','docker-compose.init.yml'];
+const run=(args)=>{const result=spawnSync('docker',args,{cwd:root,stdio:'inherit'});return result.status??1};
+run([...composeArgs,'down','-v','--remove-orphans']);
+if(run([...composeArgs,'up','-d','--wait','--wait-timeout','120','postgres'])!==0)process.exit(1);
+for(const job of ['migrate-core','migrate-onsite','migrate-operations','seed-onsite','bootstrap-runtime-roles']){
+  if(run([...initArgs,'run','--rm','--no-deps',job])!==0)process.exit(1);
+}
+const compose=spawn('docker',[...composeArgs,'up','-d','--build','--no-deps','onsite-operations-api'],{cwd:root,stdio:'inherit'});
 const exitCode=await new Promise(resolve=>compose.on('exit',code=>resolve(code??1)));
 if(exitCode!==0)process.exit(exitCode);
 let stopping=false;
-const stop=()=>{if(stopping)return;stopping=true;spawnSync('docker',['compose','down'],{cwd:directory,stdio:'inherit'});process.exit(0)};
-process.on('SIGINT',stop);process.on('SIGTERM',stop);process.on('exit',()=>{if(!stopping)spawnSync('docker',['compose','down'],{cwd:directory,stdio:'inherit'})});
+const stop=()=>{if(stopping)return;stopping=true;run([...composeArgs,'down','-v','--remove-orphans']);process.exit(0)};
+process.on('SIGINT',stop);process.on('SIGTERM',stop);process.on('exit',()=>{if(!stopping)spawnSync('docker',[...composeArgs,'down','-v','--remove-orphans'],{cwd:root,stdio:'inherit'})});
 setInterval(()=>{},60_000);

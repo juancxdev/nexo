@@ -5,6 +5,7 @@ import { useI18n } from '../../core/i18n';
 import { Alert, Badge, Button, Card, Input } from '../../design-system/atoms';
 import { EmptyState, PageHeading, SelectMenu, StatusLine } from '../../design-system/molecules';
 import { CameraQrScanner } from './CameraQrScanner';
+import { readSession } from '../../core/session';
 
 type Tab = 'checkin' | 'attendance' | 'reports';
 type Ticket = { ticket_id: string; masked_holder: string; status: string };
@@ -24,19 +25,26 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard>({ registered: 0, confirmed: 0, present: 0, attendance_rate: 0 });
   const [facts, setFacts] = useState<AttendanceFact[]>([]);
+  const [certificateId, setCertificateId] = useState('');
   const tab: Tab = context.route === '/onsite/attendance' ? 'attendance' : context.route === '/onsite/reports' ? 'reports' : 'checkin';
   const eventId = eventIds[event] || eventIds.demo;
+  const operationsApiUrl = import.meta.env.VITE_OPERATIONS_API_URL || 'http://localhost:8083';
+  const authHeaders = (extra: Record<string, string> = {}) => {
+    const session = readSession();
+    if (import.meta.env.DEV && session?.access_token === 'test') return { 'X-Mock-Role': 'staff', 'X-Mock-Tenant': context.tenantId, ...extra };
+    return session?.access_token ? { Authorization: `Bearer ${session.access_token}`, ...extra } : { 'X-Mock-Role': 'staff', 'X-Mock-Tenant': context.tenantId, ...extra };
+  };
 
   const loadDashboard = async () => {
     try {
-      const response = await fetch(`${context.apiBaseUrl}/onsite/v1/dashboard?event_id=${encodeURIComponent(eventId)}`, { headers: { 'X-Mock-Role': 'staff', 'X-Mock-Tenant': '00000000-0000-0000-0000-000000000001' } });
+      const response = await fetch(`${context.apiBaseUrl}/onsite/v1/dashboard?event_id=${encodeURIComponent(eventId)}`, { headers: authHeaders() });
       if (!response.ok) throw new Error();
       setDashboard(await response.json());
     } catch { setMessage(t('onsite.dashboardError')); }
   };
   const loadAttendance = async () => {
     try {
-      const response = await fetch(`${context.apiBaseUrl}/onsite/v1/attendance?event_id=${encodeURIComponent(eventId)}&scope=main`, { headers: { 'X-Mock-Role': 'staff' } });
+      const response = await fetch(`${context.apiBaseUrl}/onsite/v1/attendance?event_id=${encodeURIComponent(eventId)}&scope=main`, { headers: authHeaders() });
       if (!response.ok) throw new Error();
       const data = await response.json();
       setFacts(data.items || []);
@@ -50,7 +58,7 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
     if (query.length < 4) { setMessage(t('onsite.searchEmpty')); setTicket(null); return; }
     setSearching(true); setMessage(''); setTicket(null);
     try {
-      const response = await fetch(`${context.apiBaseUrl}/onsite/v1/tickets/search?q=${encodeURIComponent(query)}&event_id=${encodeURIComponent(eventId)}&scope=main`, { headers: { 'X-Mock-Role': 'staff' } });
+      const response = await fetch(`${context.apiBaseUrl}/onsite/v1/tickets/search?q=${encodeURIComponent(query)}&event_id=${encodeURIComponent(eventId)}&scope=main`, { headers: authHeaders() });
       if (!response.ok) throw new Error();
       const items: Ticket[] = await response.json();
       if (!items.length) setMessage(t('onsite.searchEmpty')); else setTicket(items[0]);
@@ -59,18 +67,47 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
   const checkin = async (ticketId: string) => {
     setLoading(true); setMessage('');
     try {
-      const response = await fetch(`${context.apiBaseUrl}/onsite/v1/attendance/check-ins`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Mock-Role': 'staff', 'Idempotency-Key': crypto.randomUUID() }, body: JSON.stringify({ ticket_id: ticketId, event_id: eventId, scope: 'main' }) });
+      const response = await fetch(`${context.apiBaseUrl}/onsite/v1/attendance/check-ins`, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }), body: JSON.stringify({ ticket_id: ticketId, event_id: eventId, scope: 'main' }) });
       const data = await response.json();
       if (!response.ok) { setMessage(t('onsite.checkinError', { error: data.code || 'error' })); return; }
       setMessage(t('onsite.checkinSuccess')); setTicket(null); setCode(''); await loadDashboard();
     } catch { setMessage(t('onsite.apiError')); } finally { setLoading(false); }
   };
   const consumeQr = (rawValue: string) => {
-    const match = rawValue.trim().match(/^nexo:ticket:(.+)$/i);
+    const compact = rawValue.trim();
+    const match = compact.match(/^nexo:ticket:(.+)$/i);
     setCameraOpen(false);
-    if (!match) { setMessage(t('onsite.qrInvalid')); return; }
-    setCode(match[1]);
-    void search(match[1]);
+    if (match) { setCode(match[1]); void search(match[1]); return; }
+    const parts = compact.split('.');
+    if (parts.length === 3) {
+      try {
+        const payload = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/') + '=='), c => c.charCodeAt(0))));
+        if (typeof payload.jti === 'string' && payload.jti.length >= 4) { setCode(payload.jti); void search(payload.jti); return; }
+      } catch { /* El backend será la autoridad criptográfica. */ }
+    }
+    setMessage(t('onsite.qrInvalid'));
+  };
+  const createReport = async () => {
+    try {
+      const response = await fetch(`${operationsApiUrl}/operations/v1/report-jobs`, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ event_id: eventId, scope: 'main', format: 'csv' }) });
+      if (!response.ok) throw new Error();
+      setMessage('Reporte solicitado. El worker procesará el archivo.');
+    } catch { setMessage(t('onsite.apiError')); }
+  };
+  const issueCertificate = async () => {
+    try {
+      const response = await fetch(`${operationsApiUrl}/operations/v1/certificate-jobs`, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ event_id: eventId, registration_id: 'registration-demo-001', display_name: 'Participante Demo' }) });
+      if (!response.ok) throw new Error();
+      const data = await response.json(); setCertificateId(data.id); setMessage(`Certificado emitido: ${data.verification_code}`);
+    } catch { setMessage(t('onsite.apiError')); }
+  };
+  const requestHukid = async () => {
+    if (!certificateId) { setMessage('Emite primero un certificado para solicitar HukID.'); return; }
+    try {
+      const response = await fetch(`${operationsApiUrl}/operations/v1/certificates/${certificateId}/hukid-deliveries`, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json', 'Idempotency-Key': `nexo-cert-${certificateId}-hukid-v1` }), body: JSON.stringify({ consent: true }) });
+      if (!response.ok) throw new Error();
+      setMessage('Entrega HukID encolada. El worker reconciliará la solicitud.');
+    } catch { setMessage(t('onsite.apiError')); }
   };
   const error = message.startsWith('No ') || message.startsWith('No se') || message.startsWith('API') || message.startsWith('Could not');
 
@@ -87,7 +124,7 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
       <Card className="nx-readiness"><div className="nx-panel-heading"><div><p className="nx-eyebrow">{t('onsite.attendanceTitle')}</p><h2>{t('onsite.attendanceSummary', { percentage: `${Math.round(dashboard.attendance_rate)}%` })}</h2></div></div><StatusLine label={t('onsite.registered')} value={String(dashboard.registered)} /><StatusLine label={t('onsite.confirmed')} value={String(dashboard.confirmed)} tone="success" /><StatusLine label={t('onsite.present')} value={String(dashboard.present)} tone="success" /></Card>
     </div>}
     {tab === 'attendance' && <Card>{facts.length === 0 ? <EmptyState title={t('onsite.attendanceTab')} description={t('onsite.history')} action={<Button variant="secondary" onClick={() => navigate('/onsite')}>{t('onsite.registerEntry')}</Button>} /> : <div className="nx-history-list"><div className="nx-panel-heading"><div><p className="nx-eyebrow">{t('onsite.attendanceTitle')}</p><h2>{facts.length} {t('onsite.entries')}</h2></div><Button variant="secondary" onClick={() => void loadAttendance()}>Actualizar</Button></div>{facts.map((fact) => <div className="nx-history-row" key={fact.id}><div><strong>{fact.ticket_id}</strong><span>{fact.type} · {new Date(fact.occurred_at).toLocaleString()}</span></div><Badge tone="success">{fact.effective_status}</Badge></div>)}</div>}</Card>}
-    {tab === 'reports' && <Card><div className="nx-job-list"><Button variant="secondary" onClick={() => setMessage('Reporte: job completed — datos simulados')}><FileText size={18} />{t('onsite.report')}</Button><Button variant="secondary" onClick={() => setMessage('Certificado: job completed — datos simulados')}><ShieldCheck size={18} />{t('onsite.certificate')}</Button><Button variant="secondary" onClick={() => setMessage('HukID: delivery completed — adapter fake')}><ShieldCheck size={18} />{t('onsite.hukid')}</Button></div>{message && <Alert tone="success"><CheckCircle2 size={16} />{message}</Alert>}</Card>}
+    {tab === 'reports' && <Card><div className="nx-job-list"><Button variant="secondary" onClick={() => void createReport()}><FileText size={18} />{t('onsite.report')}</Button><Button variant="secondary" onClick={() => void issueCertificate()}><ShieldCheck size={18} />{t('onsite.certificate')}</Button><Button variant="secondary" onClick={() => void requestHukid()}><ShieldCheck size={18} />{t('onsite.hukid')}</Button></div>{message && <Alert tone="success"><CheckCircle2 size={16} />{message}</Alert>}</Card>}
     <CameraQrScanner open={cameraOpen} onClose={() => setCameraOpen(false)} onDetected={consumeQr} copy={{ title: t('onsite.cameraTitle'), description: t('onsite.cameraDescription'), starting: t('onsite.cameraStarting'), ready: t('onsite.cameraReady'), error: t('onsite.cameraError'), stop: t('onsite.stopCamera') }} />
   </div>;
 }

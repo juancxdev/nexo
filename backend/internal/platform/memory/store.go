@@ -119,6 +119,17 @@ func (s *Store) FindSessionByRefreshHash(_ context.Context, refreshHash []byte) 
 	}
 	return auth.Session{}, ports.ErrNotFound
 }
+func (s *Store) UpdateSessionAccessHash(_ context.Context, id string, accessHash []byte) error {
+	s.Mu.Lock()
+	defer s.Mu.Unlock()
+	session, ok := s.Sessions[id]
+	if !ok {
+		return ports.ErrNotFound
+	}
+	session.AccessHash = append([]byte(nil), accessHash...)
+	s.Sessions[id] = session
+	return nil
+}
 func (s *Store) RevokeSession(_ context.Context, id string, at time.Time) error {
 	s.Mu.Lock()
 	defer s.Mu.Unlock()

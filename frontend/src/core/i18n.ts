@@ -91,7 +91,7 @@ const messages = {
     "onsite.registerEntry": "Registrar entrada",
     "onsite.reportsTitle": "Reportes, certificados y HukID",
     "onsite.reportsDescription":
-      "Acciones simuladas para validar el flujo antes de conectar proveedores.",
+      "Genera reportes, emite certificados y gestiona sus entregas digitales.",
     "onsite.report": "Generar reporte",
     "onsite.certificate": "Emitir certificados",
     "onsite.hukid": "Enviar a HukID",
@@ -186,7 +186,7 @@ const messages = {
     "onsite.registerEntry": "Register entry",
     "onsite.reportsTitle": "Reports, certificates and HukID",
     "onsite.reportsDescription":
-      "Simulated actions to validate the flow before connecting providers.",
+      "Generate reports, issue certificates and manage digital deliveries.",
     "onsite.report": "Generate report",
     "onsite.certificate": "Issue certificates",
     "onsite.hukid": "Send to HukID",

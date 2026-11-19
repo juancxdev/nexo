@@ -25,26 +25,82 @@ nexo/
 
 ## Estado
 
-La base frontend y el Core API inicial ya están implementados. El frontend usa sesión mock temporalmente; el adaptador de sesión real contra el Core API queda como siguiente integración. Los módulos de eventos, CMS, check-in, reportes y HukID permanecen fuera del Core API.
+La base frontend y el Core API están integrados con PostgreSQL. Los mocks se conservan únicamente para pruebas aisladas y E2E controlados; el flujo principal usa login, contexto de tenant y JWT reales. Los módulos de eventos, CMS, check-in, reportes y HukID permanecen separados del Core API.
 
 ## Integración de equipos
 
 Antes de crear o modificar un módulo, leer [CONTRIBUTING.md](CONTRIBUTING.md) y la [guía de integración](docs/engineering/MODULE-INTEGRATION.md). El skill reutilizable para agentes está en [skills/nexo-module-integration/SKILL.md](skills/nexo-module-integration/SKILL.md).
 
-## Regla pendiente de consolidación de PostgreSQL
+## PostgreSQL y operación de servicios
 
-Onsite Operations usa temporalmente la base `nexo_onsite` para aislar el primer corte vertical. Antes de integrar todos los servicios debe migrarse al PostgreSQL compartido del proyecto, usando el schema `onsite` dentro de la base `nexo`.
+El entorno local usa una única base lógica `nexo`. Core, Onsite, Event Operations y Event Configuration poseen schemas y roles propios, sin compartir tablas. El compose raíz es un orquestador de contenedores independientes: un cambio de un servicio se despliega de forma selectiva y no exige reconstruir los demás.
 
 La base compartida no significa compartir tablas: cada servicio conserva la propiedad de su schema, migraciones y repositorios. La comunicación de negocio debe respetar contratos HTTP/eventos y no depender de joins contra tablas privadas de otro servicio.
 
-Para levantar PostgreSQL, aplicar migraciones y ejecutar el backend:
+Para levantar el stack compartido desde cero o después de limpiar Docker:
 
 ```bash
-cd backend
+./scripts/dev-up.sh
+```
+
+`docker-compose.yml` contiene únicamente contenedores permanentes: una instancia PostgreSQL compartida, Core, cada microservicio, workers e infraestructura local. Las migraciones, el bootstrap y los seeds viven en `docker-compose.init.yml` y se ejecutan como jobs temporales con `docker compose run --rm`; no forman parte del runtime ni quedan como contenedores detenidos.
+
+El arranque completo es excepcional: se usa para una máquina nueva o una base recién creada. Un cambio de un grupo se despliega de forma selectiva, sin detener ni reconstruir los demás contenedores y sin volver a ejecutar seeds:
+
+```bash
+make deploy-core        # Core API
+make deploy-onsite      # Onsite Operations API
+make deploy-operations  # Event Operations API
+make deploy-events      # Event Configuration API + Worker
+make deploy-hukid       # Simulador HukID
+```
+
+Cada comando aplica sólo las migraciones de su bounded context y recrea únicamente el contenedor o los contenedores de ese dominio. La base PostgreSQL compartida y el resto del stack permanecen operativos.
+
+Los jobs de inicialización crean roles de runtime sin privilegios elevados (`core_app`, `onsite_app` y `operations_app`) y conceden acceso únicamente a sus schemas. El usuario `nexo` queda reservado para migraciones/bootstrap local y no debe utilizarse como credencial de una API en staging o producción. Después de modificar privilegios o una base limpia, ejecutar nuevamente:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.init.yml run --rm --no-deps bootstrap-runtime-roles
+```
+
+Las APIs aceptan CORS únicamente para los orígenes listados en `CORS_ALLOWED_ORIGINS`. En producción esta variable debe ser obligatoria y los valores locales del compose deben reemplazarse por secretos gestionados.
+
+Para validar Equipo 2 desde un entorno limpio:
+
+```bash
+bash .github/scripts/test-event-configuration-compose.sh
+```
+
+Para el frontend de Eventos:
+
+```bash
+cd frontend
+npm run test:e2e:events
+```
+
+Para levantar sólo la infraestructura permanente, sin inicializar una base nueva:
+
+```bash
 docker compose up -d --build
 ```
 
+Como alternativa directa, para reconstruir un único servicio sin tocar los demás:
+
+```bash
+docker compose up -d --build event-configuration-api
+```
+
+Para operar sólo el módulo de Eventos:
+
+```bash
+make events-up
+make events-rebuild
+make events-logs
+```
+
 Consulta [`backend/README.md`](backend/README.md) y [`backend/docs/openapi.yaml`](backend/docs/openapi.yaml) para los contratos disponibles.
+
+La revisión de compatibilidad e integración del repositorio del Grupo 3 está documentada en [`docs/engineering/GROUP3-INTEGRATION-AUDIT.md`](docs/engineering/GROUP3-INTEGRATION-AUDIT.md). El código externo no se copia directamente: debe adaptarse al schema único `nexo`, al JWT de Core, al shell de microfrontends y al contrato QR de Onsite.
 
 ## Contexto reutilizado desde POS
 

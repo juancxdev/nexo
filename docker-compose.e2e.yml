@@ -1,0 +1,5 @@
+# Overrides for the frontend Onsite E2E stack. It keeps the central compose
+# topology but avoids colliding with a developer's host PostgreSQL port.
+services:
+  postgres:
+    ports: !reset []
