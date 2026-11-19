@@ -31,6 +31,7 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
   const operationsApiUrl = import.meta.env.VITE_OPERATIONS_API_URL || 'http://localhost:8083';
   const authHeaders = (extra: Record<string, string> = {}) => {
     const session = readSession();
+    if (import.meta.env.DEV && session?.access_token === 'test') return { 'X-Mock-Role': 'staff', 'X-Mock-Tenant': context.tenantId, ...extra };
     return session?.access_token ? { Authorization: `Bearer ${session.access_token}`, ...extra } : { 'X-Mock-Role': 'staff', 'X-Mock-Tenant': context.tenantId, ...extra };
   };
 

@@ -1,5 +1,6 @@
 ROOT := ../..
 COMPOSE := docker compose -f $(ROOT)/docker-compose.yml
+COMPOSE_INIT := docker compose -f $(ROOT)/docker-compose.yml -f $(ROOT)/docker-compose.init.yml
 DATABASE_URL ?= postgres://nexo:nexo-local-only@localhost:5433/nexo?sslmode=disable
 
 .PHONY: db-up db-migrate db-seed db-reset run compose-up compose-down test vet
@@ -7,10 +8,10 @@ DATABASE_URL ?= postgres://nexo:nexo-local-only@localhost:5433/nexo?sslmode=disa
 db-up:
 	$(COMPOSE) up -d postgres
 db-migrate:
-	$(COMPOSE) run --rm migrate-core
-	$(COMPOSE) run --rm migrate-onsite
+	$(COMPOSE_INIT) run --rm --no-deps migrate-core
+	$(COMPOSE_INIT) run --rm --no-deps migrate-onsite
 db-seed:
-	$(COMPOSE) run --rm seed-onsite
+	$(COMPOSE_INIT) run --rm --no-deps seed-onsite
 db-reset:
 	$(COMPOSE) down -v
 	$(MAKE) db-up db-migrate db-seed
