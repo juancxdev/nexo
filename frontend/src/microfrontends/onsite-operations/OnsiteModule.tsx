@@ -103,7 +103,7 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
   const requestHukid = async () => {
     if (!certificateId) { setMessage('Emite primero un certificado para solicitar HukID.'); return; }
     try {
-      const response = await fetch(`${operationsApiUrl}/operations/v1/certificates/${certificateId}/hukid-deliveries`, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json', 'Idempotency-Key': `nexo-cert-${certificateId}-hukid-v1` }) });
+      const response = await fetch(`${operationsApiUrl}/operations/v1/certificates/${certificateId}/hukid-deliveries`, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json', 'Idempotency-Key': `nexo-cert-${certificateId}-hukid-v1` }), body: JSON.stringify({ consent: true }) });
       if (!response.ok) throw new Error();
       setMessage('Entrega HukID encolada. El worker reconciliará la solicitud.');
     } catch { setMessage(t('onsite.apiError')); }

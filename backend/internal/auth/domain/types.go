@@ -31,6 +31,7 @@ type Claims struct {
 	Roles     []string `json:"roles,omitempty"`
 	Scopes    []string `json:"scopes,omitempty"`
 	IssuedAt  int64    `json:"iat"`
+	NotBefore int64    `json:"nbf"`
 	Expires   int64    `json:"exp"`
 	JWTID     string   `json:"jti"`
 }

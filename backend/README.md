@@ -15,7 +15,8 @@ No incluye operaciones de eventos, CMS, check-in, reportes ni HukID. Esas capaci
 go mod tidy
 docker compose up -d postgres migrate
 DATABASE_URL='postgres://nexo:nexo-local-only@localhost:5433/nexo?sslmode=disable' \
-NEXO_JWT_SECRET='cambia-esta-clave-en-entornos-reales' go run ./cmd/api
+NEXO_JWT_PRIVATE_KEY_PATH='./.local/jwt-rsa.pem' \
+NEXO_JWT_KEY_RING_DIR='./.local' go run ./cmd/api
 ```
 
 La API queda en `http://localhost:8081`. La base PostgreSQL queda en `localhost:5433`. El frontend puede apuntar al Core API con `VITE_CORE_API_URL=http://localhost:8081` cuando se conecte el adaptador de sesión real.
@@ -37,6 +38,7 @@ make db-reset
 | Método | Ruta | Auth | Uso |
 |---|---|---|---|
 | GET | `/healthz` | No | Salud del servicio |
+| GET | `/.well-known/jwks.json` | No | Claves públicas JWT para microservicios |
 | POST | `/v1/auth/register` | No | Crear usuario |
 | POST | `/v1/auth/login` | No | Crear sesión |
 | POST | `/v1/auth/refresh` | No | Rotar refresh token |
@@ -44,5 +46,7 @@ make db-reset
 | POST | `/v1/auth/logout` | Sí | Revocar sesión |
 | GET/POST | `/v1/tenants` | Sí | Listar/crear tenants |
 | GET | `/v1/navigation/sidebar` | Sí | Menú del shell |
+
+La rotación de claves RSA está documentada en [`../docs/engineering/JWT-KEY-ROTATION.md`](../docs/engineering/JWT-KEY-ROTATION.md). El endpoint interno de rotación no se expone al navegador ni debe publicarse en Internet.
 
 El runtime de producción usa `internal/platform/postgres`. `internal/platform/memory` se conserva únicamente como adaptador de pruebas unitarias. Las contraseñas se almacenan con bcrypt y los tokens sólo se guardan como hashes.

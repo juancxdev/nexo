@@ -100,6 +100,8 @@ make events-logs
 
 Consulta [`backend/README.md`](backend/README.md) y [`backend/docs/openapi.yaml`](backend/docs/openapi.yaml) para los contratos disponibles.
 
+La revisión de compatibilidad e integración del repositorio del Grupo 3 está documentada en [`docs/engineering/GROUP3-INTEGRATION-AUDIT.md`](docs/engineering/GROUP3-INTEGRATION-AUDIT.md). El código externo no se copia directamente: debe adaptarse al schema único `nexo`, al JWT de Core, al shell de microfrontends y al contrato QR de Onsite.
+
 ## Contexto reutilizado desde POS
 
 La evaluación técnica de POS está documentada en [`docs/POS-BASELINE.md`](docs/POS-BASELINE.md). CodeGraph fue inicializado en POS para explorar el shell, la sesión, el bootstrap de tenant/local/administrador, la navegación por roles y los componentes compartidos.

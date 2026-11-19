@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"crypto"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
@@ -29,11 +28,10 @@ import (
 )
 
 type Server struct {
-	Repo       ports.Repository
-	Issuer     string
-	Audience   string
-	PrivateKey *rsa.PrivateKey
-	KeyID      string
+	Repo     ports.Repository
+	Issuer   string
+	Audience string
+	Keys     *keyRing
 }
 type contextKey string
 
@@ -57,7 +55,7 @@ type refreshRequest struct {
 }
 
 func NewServer(repo ports.Repository) *Server {
-	key, err := loadOrCreateSigningKey(os.Getenv("NEXO_JWT_PRIVATE_KEY_PATH"))
+	keys, err := newKeyRing(os.Getenv("NEXO_JWT_PRIVATE_KEY_PATH"))
 	if err != nil {
 		panic(err)
 	}
@@ -69,7 +67,7 @@ func NewServer(repo ports.Repository) *Server {
 	if audience == "" {
 		audience = "nexo-services"
 	}
-	return &Server{Repo: repo, Issuer: issuer, Audience: audience, PrivateKey: key, KeyID: "nexo-dev-1"}
+	return &Server{Repo: repo, Issuer: issuer, Audience: audience, Keys: keys}
 }
 
 func loadOrCreateSigningKey(path string) (*rsa.PrivateKey, error) {
@@ -103,6 +101,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.health)
 	mux.HandleFunc("/.well-known/jwks.json", s.jwks)
+	mux.HandleFunc("/internal/v1/security/signing-keys/rotations", s.rotateSigningKey)
 	mux.HandleFunc("/v1/auth/register", s.register)
 	mux.HandleFunc("/v1/auth/login", s.login)
 	mux.HandleFunc("/v1/auth/refresh", s.refresh)
@@ -160,12 +159,52 @@ func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) jwks(w http.ResponseWriter, _ *http.Request) {
-	pub := &s.PrivateKey.PublicKey
-	writeJSON(w, http.StatusOK, map[string]any{"keys": []map[string]string{{
-		"kty": "RSA", "use": "sig", "alg": "RS256", "kid": s.KeyID,
-		"n": base64.RawURLEncoding.EncodeToString(pub.N.Bytes()),
-		"e": base64.RawURLEncoding.EncodeToString([]byte{1, 0, 1}),
-	}}})
+	writeJSON(w, http.StatusOK, map[string]any{"keys": s.Keys.jwks()})
+}
+
+// rotateSigningKey is deliberately an internal, secret-protected endpoint.
+// It lets an operator make the next key active without invalidating tokens
+// signed by the former key during the configured transition window.
+func (s *Server) rotateSigningKey(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.NotFound(w, r)
+		return
+	}
+	configured := os.Getenv("NEXO_INTERNAL_ROTATION_TOKEN")
+	provided := r.Header.Get("X-Nexo-Rotation-Token")
+	if configured == "" || provided == "" || !hmac.Equal([]byte(configured), []byte(provided)) {
+		errorJSON(w, http.StatusUnauthorized, "rotation_unauthorized", "no autorizado para rotar claves")
+		return
+	}
+	window := 9 * time.Hour
+	if raw := os.Getenv("NEXO_JWT_ROTATION_WINDOW"); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			errorJSON(w, http.StatusInternalServerError, "rotation_configuration_invalid", "la ventana de rotación es inválida")
+			return
+		}
+		window = parsed
+	}
+	var in struct {
+		TransitionWindowSeconds int64 `json:"transition_window_seconds"`
+	}
+	if r.Body != nil && r.ContentLength != 0 && decode(r, &in) != nil {
+		errorJSON(w, http.StatusBadRequest, "invalid_rotation_request", "la solicitud de rotación es inválida")
+		return
+	}
+	if in.TransitionWindowSeconds != 0 {
+		window = time.Duration(in.TransitionWindowSeconds) * time.Second
+	}
+	if window < 5*time.Minute || window > 48*time.Hour {
+		errorJSON(w, http.StatusBadRequest, "invalid_rotation_window", "la ventana debe estar entre cinco minutos y 48 horas")
+		return
+	}
+	item, err := s.Keys.rotate(window)
+	if err != nil {
+		errorJSON(w, http.StatusInternalServerError, "rotation_failed", "no se pudo rotar la clave de firma")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"kid": item.Kid, "state": item.State, "activated_at": item.ActivatedAt, "previous_key_retire_after": time.Now().UTC().Add(window), "jwks": "/.well-known/jwks.json"})
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
@@ -221,7 +260,7 @@ func (s *Server) createSession(ctx context.Context, u auth.User) (map[string]any
 	now := time.Now().UTC()
 	sid := uuid.NewString()
 	tenantIDs, _ := s.Repo.ListTenants(ctx, u.ID)
-	claims := auth.Claims{Issuer: s.Issuer, Audience: s.Audience, Subject: u.ID, SessionID: sid, Expires: now.Add(8 * time.Hour).Unix(), IssuedAt: now.Unix(), JWTID: uuid.NewString()}
+	claims := auth.Claims{Issuer: s.Issuer, Audience: s.Audience, Subject: u.ID, SessionID: sid, Expires: now.Add(8 * time.Hour).Unix(), IssuedAt: now.Unix(), NotBefore: now.Unix(), JWTID: uuid.NewString()}
 	for _, t := range tenantIDs {
 		claims.TenantIDs = append(claims.TenantIDs, t.ID)
 	}
@@ -462,33 +501,29 @@ func randomToken() string {
 }
 func hash(value string) []byte { sum := sha256.Sum256([]byte(value)); return sum[:] }
 func (s *Server) sign(c auth.Claims) (string, error) {
-	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT","kid":"nexo-dev-1"}`))
 	payloadBytes, err := json.Marshal(c)
 	if err != nil {
 		return "", err
 	}
-	payload := base64.RawURLEncoding.EncodeToString(payloadBytes)
-	unsigned := header + "." + payload
-	digest := sha256.Sum256([]byte(unsigned))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, s.PrivateKey, crypto.SHA256, digest[:])
-	if err != nil {
-		return "", err
-	}
-	return unsigned + "." + base64.RawURLEncoding.EncodeToString(sig), nil
+	return s.Keys.sign(payloadBytes)
 }
 func (s *Server) verify(token string, c *auth.Claims) bool {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return false
 	}
-	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
-	digest := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
-	if err != nil || rsa.VerifyPKCS1v15(&s.PrivateKey.PublicKey, crypto.SHA256, digest[:], sig) != nil {
+	var header struct {
+		Algorithm string `json:"alg"`
+		KeyID     string `json:"kid"`
+	}
+	headerRaw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil || json.Unmarshal(headerRaw, &header) != nil || header.Algorithm != "RS256" || header.KeyID == "" || !s.Keys.verify(header.KeyID, parts[0]+"."+parts[1], parts[2]) {
 		return false
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	if err != nil || json.Unmarshal(payload, c) != nil {
 		return false
 	}
-	return c.Subject != "" && c.SessionID != "" && c.Issuer == s.Issuer && c.Audience == s.Audience && c.Expires > time.Now().Unix()
+	now := time.Now().Unix()
+	return c.Subject != "" && c.SessionID != "" && c.Issuer == s.Issuer && c.Audience == s.Audience && c.Expires > now && (c.NotBefore == 0 || c.NotBefore <= now+30)
 }
