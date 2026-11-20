@@ -29,11 +29,15 @@ type server struct {
 	mu       sync.Mutex
 	requests map[string]issuance
 	tokens   map[string]time.Time
-	fault    int
+	faults   map[string]faultConfig
+}
+type faultConfig struct {
+	Status    int
+	Remaining int
 }
 
 func main() {
-	s := &server{requests: map[string]issuance{}, tokens: map[string]time.Time{}}
+	s := &server{requests: map[string]issuance{}, tokens: map[string]time.Time{}, faults: map[string]faultConfig{}}
 	a := newApp(s)
 	addr := os.Getenv("HUKID_SIMULATOR_ADDR")
 	if addr == "" {
@@ -59,6 +63,9 @@ func newApp(s *server) *fiber.App {
 	return a
 }
 func (s *server) token(c fiber.Ctx) error {
+	if status := s.consumeFault("token"); status != 0 {
+		return problem(c, status, "simulated_failure", "fallo configurado para pruebas")
+	}
 	if c.FormValue("grant_type") != "client_credentials" {
 		return problem(c, 400, "unsupported_grant_type", "solo se admite client_credentials")
 	}
@@ -92,10 +99,9 @@ func (s *server) create(c fiber.Ctx) error {
 	hash := hex.EncodeToString(sum[:])
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.fault != 0 {
-		f := s.fault
-		s.fault = 0
-		return problem(c, f, "simulated_failure", "fallo configurado para pruebas")
+	if f := s.faults["create"]; f.Remaining > 0 {
+		s.faults["create"] = faultConfig{Status: f.Status, Remaining: f.Remaining - 1}
+		return problem(c, f.Status, "simulated_failure", "fallo configurado para pruebas")
 	}
 	for _, v := range s.requests {
 		if v.IdempotencyKey == key {
@@ -128,11 +134,19 @@ func (s *server) create(c fiber.Ctx) error {
 	return c.Status(201).JSON(item)
 }
 func (s *server) get(c fiber.Ctx) error {
+	if status := s.consumeFault("get"); status != 0 {
+		return problem(c, status, "simulated_failure", "fallo configurado para pruebas")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	v, ok := s.requests[c.Params("id")]
 	if !ok {
 		return problem(c, 404, "resource_not_found", "solicitud no encontrada")
+	}
+	if time.Now().UTC().After(v.ExpiresAt) && v.IssuanceState != "issued" && v.IssuanceState != "cancelled" {
+		v.OfferState = "expired"
+		v.IssuanceState = "failed"
+		s.requests[v.ID] = v
 	}
 	return c.JSON(v)
 }
@@ -186,19 +200,39 @@ func (s *server) reset(c fiber.Ctx) error {
 	defer s.mu.Unlock()
 	s.requests = map[string]issuance{}
 	s.tokens = map[string]time.Time{}
+	s.faults = map[string]faultConfig{}
 	return c.SendStatus(204)
 }
 func (s *server) setFault(c fiber.Ctx) error {
 	var b struct {
-		Status int `json:"status"`
+		Status int    `json:"status"`
+		Route  string `json:"route"`
+		Count  int    `json:"count"`
 	}
-	if json.Unmarshal(c.Body(), &b) != nil || b.Status < 400 {
+	if json.Unmarshal(c.Body(), &b) != nil || b.Status < 400 || (b.Route != "" && b.Route != "token" && b.Route != "create" && b.Route != "get") {
 		return problem(c, 400, "invalid_fault", "status inválido")
 	}
+	if b.Route == "" {
+		b.Route = "create"
+	}
+	if b.Count < 1 {
+		b.Count = 1
+	}
 	s.mu.Lock()
-	s.fault = b.Status
+	s.faults[b.Route] = faultConfig{Status: b.Status, Remaining: b.Count}
 	s.mu.Unlock()
 	return c.SendStatus(204)
+}
+func (s *server) consumeFault(route string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f := s.faults[route]
+	if f.Remaining < 1 {
+		return 0
+	}
+	f.Remaining--
+	s.faults[route] = f
+	return f.Status
 }
 func problem(c fiber.Ctx, status int, code, detail string) error {
 	return c.Status(status).Type("application/problem+json").JSON(fiber.Map{"type": "https://docs.hukid.local/problems/" + code, "title": code, "status": status, "code": code, "detail": detail, "correlationId": c.Get("X-Correlation-Id")})

@@ -10,16 +10,16 @@ import {translateEvents} from '../core/events-i18n';
 import {MobileMenuButton,Sidebar} from '../design-system/organisms';
 import {Button,Card} from '../design-system/atoms';
 import {PageHeading,EmptyState} from '../design-system/molecules';
-import {findModuleForRoute,moduleRegistry,visibleModules} from '../platform/microfrontends/registry';
+import {findModuleForRoute,findPublicModuleForRoute,moduleRegistry,visibleModules} from '../platform/microfrontends/registry';
 import type {Capability,MicrofrontendManifest,ModuleContext} from '../platform/microfrontends/contracts';
 const demoEvents = import.meta.env.DEV && import.meta.env.VITE_EVENTS_DEMO === 'true';
 const baseCapabilities:ModuleContext['capabilities']=['onsite:read','onsite:checkin','reports:read'];
 export function AppShell(){
  const navigate=useNavigate(),location=useLocation(),{t}=useI18n();
  const [session,setSession]=useState<Session|null>(()=>readSession());const [collapsed,setCollapsed]=useState(false);const [mobileOpen,setMobileOpen]=useState(false);const [theme,setTheme]=useState<'light'|'dark'>('light');const [serverSidebar,setServerSidebar]=useState<SidebarResponse|null>(null);const [activeTenantId,setActiveTenantId]=useState(()=>readSession()?.tenants[0]?.id||'');
- const authenticated=isSessionValid(session),publicRoute=location.pathname==='/login',homeRoute=location.pathname==='/';
+ const authenticated=isSessionValid(session),publicRoute=location.pathname==='/login',publicModule=findPublicModuleForRoute(location.pathname),participationRoute=!!publicModule,homeRoute=location.pathname==='/',authRoute=publicRoute||participationRoute;
  useEffect(()=>{document.documentElement.dataset.theme=theme},[theme]);
- useEffect(()=>{if(!authenticated&&!publicRoute&&!homeRoute)navigate('/login');if(authenticated&&publicRoute)navigate('/')},[authenticated,publicRoute,homeRoute,navigate]);
+ useEffect(()=>{if(!authenticated&&!authRoute&&!homeRoute)navigate('/login');if(authenticated&&publicRoute)navigate('/')},[authenticated,authRoute,publicRoute,homeRoute,navigate]);
  useEffect(()=>{if(!session||!authenticated)return;fetchSidebar(session.access_token,activeTenantId).then(result=>setServerSidebar(result)).catch(()=>setServerSidebar(null))},[authenticated,session,activeTenantId]);
  const capabilities=useMemo<ModuleContext['capabilities']>(()=>{
   const serverEventCaps=(serverSidebar?.items.find(item=>item.id==='events')?.capabilities||[]).filter((cap):cap is Capability=>cap.startsWith('events:'));
@@ -27,6 +27,7 @@ export function AppShell(){
   return [...baseCapabilities,...serverEventCaps,...fallbackDemoCaps];
  },[serverSidebar]);
  const modules=useMemo(()=>{const capable=visibleModules(capabilities);return serverSidebar?capable.filter(module=>serverSidebar.items.some(item=>item.id===module.id)||(demoEvents&&module.id==='events')):capable},[serverSidebar,capabilities]);
+ if(participationRoute&&publicModule){const publicContext:ModuleContext={version:1,tenantId:'',workspaceId:'',capabilities:[],apiBaseUrl:import.meta.env.VITE_PARTICIPATION_API_URL||'http://localhost:8084',theme,route:location.pathname};return <div className="nx-public-module-shell"><main id="main-content" className="nx-public-module-content"><ModuleLoader module={publicModule} context={publicContext}/></main></div>}
  if((!session||!authenticated)&&homeRoute)return <HomePage onAccess={()=>navigate('/login')}/>;
  if(!session||!authenticated)return <AuthPage onAuthenticated={value=>{setSession(value);setActiveTenantId(value.tenants[0]?.id||'');navigate('/')}}/>;
  const tenant=session.tenants.find(item=>item.id===activeTenantId)||session.tenants[0];const context:ModuleContext={version:1,tenantId:tenant?.id||'',workspaceId:tenant?.id||'',capabilities,apiBaseUrl:import.meta.env.VITE_TEAM4_API_URL||'http://localhost:8082',theme,route:location.pathname};const active=location.pathname==='/'?'overview':findModuleForRoute(location.pathname,modules)?.id||'';

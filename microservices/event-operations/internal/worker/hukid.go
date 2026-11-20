@@ -51,15 +51,19 @@ func (w *Worker) tickReports(ctx context.Context) {
 	}
 }
 func (w *Worker) tick(ctx context.Context) {
-	rows, err := w.DB.Query(ctx, `SELECT d.id::text,d.idempotency_key,d.state,COALESCE(d.hukid_request_id,''),c.base_url,c.oauth_url,d.certificate_id::text,d.claims_ciphertext,d.claims_nonce,d.claims_key_version FROM integration.hukid_deliveries d JOIN integration.hukid_configs c ON c.id=d.config_id WHERE d.state IN ('pending','request_created','offer_redeemed') AND d.next_attempt_at<=now() LIMIT 20`)
+	rows, err := w.DB.Query(ctx, `WITH claimed AS (SELECT id FROM integration.hukid_deliveries WHERE state IN ('pending','request_created','offer_redeemed') AND next_attempt_at<=now() AND (lease_until IS NULL OR lease_until<now()) ORDER BY next_attempt_at FOR UPDATE SKIP LOCKED LIMIT 20) UPDATE integration.hukid_deliveries d SET lease_until=now()+interval '30 seconds' FROM claimed WHERE d.id=claimed.id RETURNING d.id::text`)
 	if err != nil {
 		return
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var id, key, state, requestID, base, oauth, certID, keyVersion string
+		var id string
+		if rows.Scan(&id) != nil {
+			continue
+		}
+		var key, state, requestID, base, oauth, certID, keyVersion string
 		var ciphertext, nonce []byte
-		if rows.Scan(&id, &key, &state, &requestID, &base, &oauth, &certID, &ciphertext, &nonce, &keyVersion) == nil {
+		if w.DB.QueryRow(ctx, `SELECT d.idempotency_key,d.state,COALESCE(d.hukid_request_id,''),c.base_url,c.oauth_url,d.certificate_id::text,d.claims_ciphertext,d.claims_nonce,d.claims_key_version FROM integration.hukid_deliveries d JOIN integration.hukid_configs c ON c.id=d.config_id WHERE d.id=$1::uuid`, id).Scan(&key, &state, &requestID, &base, &oauth, &certID, &ciphertext, &nonce, &keyVersion) == nil {
 			_ = w.process(ctx, id, key, state, requestID, base, oauth, certID, ciphertext, nonce, keyVersion)
 		}
 	}
@@ -102,7 +106,7 @@ func (w *Worker) process(ctx context.Context, id, key, state, requestID, base, o
 		if out.ID == "" || out.Offer == "" {
 			return w.fail(ctx, id, "invalid_response")
 		}
-		_, err = w.DB.Exec(ctx, `UPDATE integration.hukid_deliveries SET state='request_created',hukid_request_id=$2,credential_offer_uri=$3,offer_expires_at=now()+interval '5 minutes',attempts=attempts+1,next_attempt_at=now()+interval '5 seconds',updated_at=now() WHERE id=$1::uuid`, id, out.ID, out.Offer)
+		_, err = w.DB.Exec(ctx, `UPDATE integration.hukid_deliveries SET state='request_created',hukid_request_id=$2,credential_offer_uri=$3,offer_expires_at=now()+interval '5 minutes',attempts=attempts+1,next_attempt_at=now()+interval '5 seconds',lease_until=NULL,updated_at=now() WHERE id=$1::uuid`, id, out.ID, out.Offer)
 		if err == nil {
 			_, _ = w.DB.Exec(ctx, `UPDATE certificates.certificates SET state='offer_available' WHERE id=$1::uuid`, certID)
 		}
@@ -115,6 +119,9 @@ func (w *Worker) process(ctx context.Context, id, key, state, requestID, base, o
 		return w.retry(ctx, id, "network_error")
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return w.retry(ctx, id, fmt.Sprintf("hukid_%d", resp.StatusCode))
+	}
 	var out struct {
 		OfferState    string `json:"offerState"`
 		IssuanceState string `json:"issuanceState"`
@@ -134,7 +141,7 @@ func (w *Worker) process(ctx context.Context, id, key, state, requestID, base, o
 		next = "offer_redeemed"
 	}
 	if next != state {
-		_, err = w.DB.Exec(ctx, `UPDATE integration.hukid_deliveries SET state=$2,credential_id=NULLIF($3,''),next_attempt_at=now()+interval '5 seconds',updated_at=now() WHERE id=$1::uuid`, id, next, out.CredentialID)
+		_, err = w.DB.Exec(ctx, `UPDATE integration.hukid_deliveries SET state=$2,credential_id=NULLIF($3,''),next_attempt_at=now()+interval '5 seconds',lease_until=NULL,updated_at=now() WHERE id=$1::uuid`, id, next, out.CredentialID)
 		if err == nil {
 			certificateState := map[string]string{"credential_issued": "credential_issued", "offer_redeemed": "offer_redeemed", "failed": "failed", "cancelled": "cancelled"}[next]
 			if certificateState != "" {
@@ -142,7 +149,7 @@ func (w *Worker) process(ctx context.Context, id, key, state, requestID, base, o
 			}
 		}
 	} else {
-		_, err = w.DB.Exec(ctx, `UPDATE integration.hukid_deliveries SET attempts=attempts+1,next_attempt_at=now()+interval '5 seconds',updated_at=now() WHERE id=$1::uuid`, id)
+		_, err = w.DB.Exec(ctx, `UPDATE integration.hukid_deliveries SET attempts=attempts+1,next_attempt_at=now()+interval '5 seconds',lease_until=NULL,updated_at=now() WHERE id=$1::uuid`, id)
 	}
 	return err
 }
@@ -154,6 +161,9 @@ func (w *Worker) token(ctx context.Context, url string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("hukid_%d", resp.StatusCode)
+	}
 	var out struct {
 		AccessToken string `json:"access_token"`
 	}
@@ -163,7 +173,7 @@ func (w *Worker) token(ctx context.Context, url string) (string, error) {
 	return out.AccessToken, nil
 }
 func (w *Worker) retry(ctx context.Context, id, code string) error {
-	_, err := w.DB.Exec(ctx, `UPDATE integration.hukid_deliveries SET attempts=attempts+1,last_error_code=$2,next_attempt_at=now()+make_interval(secs=>LEAST(300,power(2,LEAST(attempts,8)))),updated_at=now(),state=CASE WHEN attempts+1>=8 THEN 'failed' ELSE state END WHERE id=$1::uuid`, id, code)
+	_, err := w.DB.Exec(ctx, `UPDATE integration.hukid_deliveries SET attempts=attempts+1,last_error_code=$2,next_attempt_at=now()+make_interval(secs=>LEAST(300,power(2,LEAST(attempts,8)))),lease_until=NULL,updated_at=now(),state=CASE WHEN attempts+1>=8 THEN 'failed' ELSE state END WHERE id=$1::uuid`, id, code)
 	return err
 }
 func (w *Worker) retryAfter(ctx context.Context, id, code, retryAfter string) error {
@@ -171,10 +181,10 @@ func (w *Worker) retryAfter(ctx context.Context, id, code, retryAfter string) er
 	if err != nil || seconds < 1 || seconds > 300 {
 		return w.retry(ctx, id, code)
 	}
-	_, err = w.DB.Exec(ctx, `UPDATE integration.hukid_deliveries SET attempts=attempts+1,last_error_code=$2,next_attempt_at=now()+make_interval(secs=>$3),updated_at=now() WHERE id=$1::uuid`, id, code, seconds)
+	_, err = w.DB.Exec(ctx, `UPDATE integration.hukid_deliveries SET attempts=attempts+1,last_error_code=$2,next_attempt_at=now()+make_interval(secs=>$3),lease_until=NULL,updated_at=now() WHERE id=$1::uuid`, id, code, seconds)
 	return err
 }
 func (w *Worker) fail(ctx context.Context, id, code string) error {
-	_, err := w.DB.Exec(ctx, `UPDATE integration.hukid_deliveries SET state='failed',attempts=attempts+1,last_error_code=$2,updated_at=now() WHERE id=$1::uuid`, id, code)
+	_, err := w.DB.Exec(ctx, `UPDATE integration.hukid_deliveries SET state='failed',attempts=attempts+1,last_error_code=$2,lease_until=NULL,updated_at=now() WHERE id=$1::uuid`, id, code)
 	return err
 }

@@ -5,7 +5,7 @@ const session={access_token:'test',refresh_token:'test',expires_at:4102444800,pr
 test.beforeEach(async({page})=>{
   await page.addInitScript(value=>sessionStorage.setItem('nexo.session',JSON.stringify(value)),session);
   await page.goto('/onsite');
-  await page.getByRole('button',{name:/Operaciones presenciales/}).click();
+  await expect(page.getByLabel('Código QR o ticket')).toBeVisible();
 });
 
 test('busca manualmente y registra un ticket persistente',async({page})=>{

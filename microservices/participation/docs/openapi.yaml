@@ -1,0 +1,80 @@
+openapi: 3.1.0
+info:
+  title: Nexo Participation API
+  version: 0.1.0
+  description: Registro público e tickets de participación, sobre PostgreSQL central.
+servers:
+  - url: http://localhost:8084
+paths:
+  /health/live:
+    get: {responses: {'200': {description: OK}}}
+  /health/ready:
+    get: {responses: {'200': {description: OK}, '503': {description: Database unavailable}}}
+  /participation/public/v1/sites/{site}/events/{event}/form:
+    get:
+      parameters:
+        - {$ref: '#/components/parameters/Site'}
+        - {$ref: '#/components/parameters/Event'}
+      responses:
+        '200': {description: Published form, content: {application/json: {schema: {$ref: '#/components/schemas/ParticipationForm'}}}}
+        '404': {$ref: '#/components/responses/Problem'}
+  /participation/public/v1/sites/{site}/events/{event}/registrations:
+    post:
+      parameters:
+        - {$ref: '#/components/parameters/Site'}
+        - {$ref: '#/components/parameters/Event'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RegistrationCreate'}}}}
+      responses:
+        '201': {description: Registration receipt, content: {application/json: {schema: {$ref: '#/components/schemas/RegistrationReceipt'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+  /participation/self/v1/registrations/{id}/ticket:
+    get:
+      security: [{bearerAuth: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses:
+        '200': {description: Ticket, content: {application/json: {schema: {$ref: '#/components/schemas/Ticket'}}}}
+        '401': {$ref: '#/components/responses/Problem'}
+components:
+  securitySchemes: {bearerAuth: {type: http, scheme: bearer}}
+  parameters:
+    Site: {name: site, in: path, required: true, schema: {type: string}}
+    Event: {name: event, in: path, required: true, schema: {type: string}}
+    IdempotencyKey: {name: Idempotency-Key, in: header, required: true, schema: {type: string, minLength: 8}}
+  responses:
+    Problem: {description: RFC 9457 problem, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+  schemas:
+    ParticipationForm:
+      type: object
+      required: [site_slug,event_slug,event_id,form_version_id,consent_version,binding_state,consent_text]
+      properties:
+        site_slug: {type: string}
+        event_slug: {type: string}
+        event_id: {type: string}
+        event_title: {type: string}
+        form_version_id: {type: string, format: uuid}
+        consent_version: {type: string}
+        binding_state: {type: string}
+        consent_text: {type: string}
+        schema: {type: object}
+        capacity_summary: {type: object}
+    RegistrationCreate:
+      type: object
+      required: [form_version_id,consent_version,consent_accepted,attendee]
+      properties:
+        form_version_id: {type: string, format: uuid}
+        consent_version: {type: string}
+        consent_accepted: {type: boolean}
+        attendee: {type: object, required: [full_name,email], properties: {full_name: {type: string}, email: {type: string, format: email}, institution: {type: string}}}
+        answers: {type: object}
+    RegistrationReceipt:
+      type: object
+      properties: {id: {type: string, format: uuid}, event_id: {type: string}, state: {type: string}, waitlist_position: {type: integer, nullable: true}, ticket_id: {type: string, nullable: true}, self_access_token: {type: string}}
+    Ticket:
+      type: object
+      properties: {id: {type: string, format: uuid}, state: {type: string}, ticket_jws: {type: string}, expires_at: {type: string, format: date-time}}
+    Problem:
+      type: object
+      required: [type,title,status,detail]
+      properties: {type: {type: string, format: uri}, title: {type: string}, status: {type: integer}, code: {type: string}, detail: {type: string}}

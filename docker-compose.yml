@@ -40,6 +40,20 @@ services:
       NEXO_JWT_AUDIENCE: nexo-services
       CORS_ALLOWED_ORIGINS: http://localhost:5174,http://127.0.0.1:5174
     ports: ["8082:8082"]
+  participation-api:
+    build: ./microservices/participation
+    depends_on: {postgres: {condition: service_healthy}}
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgres://participation_app:participation-app-local-only@postgres:5432/nexo?sslmode=disable
+      PARTICIPATION_ADDR: :8084
+      CORS_ALLOWED_ORIGINS: http://localhost:5174,http://127.0.0.1:5174
+    ports: ["8084:8084"]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8084/health/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
   event-operations-api:
     build: ./microservices/event-operations
     depends_on: {postgres: {condition: service_healthy}}

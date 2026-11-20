@@ -1,0 +1,4 @@
+CREATE SCHEMA IF NOT EXISTS participation;
+INSERT INTO participation.forms(id,site_slug,event_slug,event_id,event_title,form_version_id,consent_version,binding_state,consent_text,schema,capacity,remaining,waitlist_enabled)
+VALUES ('0194eb00-0000-7000-8000-000000000101','incuba-unas','congreso-innovacion-demo-day-2026','demo-day-2026','Demo Day IncubaUNAS 2026','0194eb00-0000-7000-8000-000000000102','consent-v1','open','Acepto el tratamiento de mis datos para gestionar mi participación.', '{"type":"object","properties":{"full_name":{"title":"Nombre completo","type":"string"},"email":{"title":"Correo","type":"string"},"institution":{"title":"Institución","type":"string"},"role":{"title":"Rol","type":"string"}}}'::jsonb,128,128,true)
+ON CONFLICT(site_slug,event_slug) DO UPDATE SET binding_state=EXCLUDED.binding_state,remaining=EXCLUDED.remaining,capacity=EXCLUDED.capacity,confirmed_count=0;
