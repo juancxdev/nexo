@@ -11,3 +11,4 @@ ALTER TABLE certificates.certificates
   DROP COLUMN IF EXISTS claims_hash,
   DROP COLUMN IF EXISTS eligibility_rule_version,
   DROP COLUMN IF EXISTS evidence_digest;
+ALTER TABLE integration.hukid_deliveries DROP COLUMN IF EXISTS lease_until;

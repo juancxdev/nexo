@@ -7,11 +7,20 @@ services:
     image: migrate/migrate:v4.18.3
     volumes: [./microservices/onsite-operations/migrations:/migrations:ro]
     command: ["-path=/migrations", "-database=postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable&x-migrations-table=onsite_schema_migrations", "up"]
+  migrate-participation:
+    image: migrate/migrate:v4.18.3
+    volumes: [./microservices/participation/migrations:/migrations:ro]
+    command: ["-path=/migrations", "-database=postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable&x-migrations-table=participation_schema_migrations", "up"]
   seed-onsite:
     image: postgres:16-alpine
     volumes: [./microservices/onsite-operations/seeds:/seeds:ro]
     entrypoint: ["/bin/sh", "-c"]
     command: ["psql postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable -f /seeds/demo-day.sql -f /seeds/demo-day-presence.sql"]
+  seed-participation:
+    image: postgres:16-alpine
+    volumes: [./microservices/participation/seeds:/seeds:ro]
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["psql postgres://nexo:nexo-local-only@postgres:5432/nexo?sslmode=disable -f /seeds/demo-day-participation.sql"]
   migrate-operations:
     image: migrate/migrate:v4.18.3
     volumes: [./microservices/event-operations/migrations:/migrations:ro]

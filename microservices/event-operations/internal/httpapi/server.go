@@ -310,7 +310,7 @@ func (s *Server) createDelivery(c fiber.Ctx) error {
 	}
 	key := c.Get("Idempotency-Key")
 	if key == "" {
-		key = "nexo-cert:" + cert + ":hukid:v1"
+		return problem(c, 400, "idempotency_key_required", "Idempotency-Key es obligatorio")
 	}
 	var existingID, existingState string
 	if err := s.DB.QueryRow(c.Context(), `SELECT id::text,state FROM integration.hukid_deliveries WHERE tenant_id=$1::uuid AND source_reference=$2`, tenant(c), cert).Scan(&existingID, &existingState); err == nil {
@@ -349,6 +349,15 @@ func (s *Server) createDelivery(c fiber.Ctx) error {
 	defer tx.Rollback(c.Context())
 	_, err = tx.Exec(c.Context(), `INSERT INTO integration.hukid_deliveries(id,tenant_id,certificate_id,config_id,idempotency_key,source_reference,state,claims_ciphertext,claims_nonce,claims_key_version,claims_hash,consent_granted_at) VALUES($1,$2::uuid,$3,$4,$5,$6,'pending',$7,$8,$9,$10,now())`, id, tenant(c), cert, config, key, cert, ciphertext, nonce, keyVersion, base64.RawURLEncoding.EncodeToString(digest[:]))
 	if err != nil {
+		if strings.Contains(err.Error(), "duplicate key") {
+			var replayID, replayState, replayKey string
+			if lookupErr := s.DB.QueryRow(c.Context(), `SELECT id::text,state,idempotency_key FROM integration.hukid_deliveries WHERE tenant_id=$1::uuid AND source_reference=$2`, tenant(c), cert).Scan(&replayID, &replayState, &replayKey); lookupErr == nil {
+				if replayKey != key {
+					return problem(c, 409, "delivery_exists", "el certificado ya tiene una entrega HukID")
+				}
+				return c.Status(200).JSON(fiber.Map{"id": replayID, "certificate_id": cert, "state": replayState, "source_reference": cert, "replayed": true})
+			}
+		}
 		return problem(c, 503, "persistence_unavailable", err.Error())
 	}
 	if _, err = tx.Exec(c.Context(), `UPDATE certificates.certificates SET state='request_pending',claims_hash=$3,consent_granted_at=now() WHERE id=$1::uuid AND tenant_id=$2::uuid`, cert, tenant(c), base64.RawURLEncoding.EncodeToString(digest[:])); err != nil {

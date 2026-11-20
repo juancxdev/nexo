@@ -6,10 +6,10 @@ const initArgs=['compose','-p','nexo-frontend-e2e','-f','docker-compose.yml','-f
 const run=(args)=>{const result=spawnSync('docker',args,{cwd:root,stdio:'inherit'});return result.status??1};
 run([...composeArgs,'down','-v','--remove-orphans']);
 if(run([...composeArgs,'up','-d','--wait','--wait-timeout','120','postgres'])!==0)process.exit(1);
-for(const job of ['migrate-core','migrate-onsite','migrate-operations','seed-onsite','bootstrap-runtime-roles']){
+for(const job of ['migrate-core','migrate-onsite','migrate-participation','migrate-operations','seed-onsite','seed-participation','bootstrap-runtime-roles']){
   if(run([...initArgs,'run','--rm','--no-deps',job])!==0)process.exit(1);
 }
-const compose=spawn('docker',[...composeArgs,'up','-d','--build','--no-deps','onsite-operations-api'],{cwd:root,stdio:'inherit'});
+const compose=spawn('docker',[...composeArgs,'up','-d','--build','--no-deps','onsite-operations-api','participation-api'],{cwd:root,stdio:'inherit'});
 const exitCode=await new Promise(resolve=>compose.on('exit',code=>resolve(code??1)));
 if(exitCode!==0)process.exit(exitCode);
 let stopping=false;
