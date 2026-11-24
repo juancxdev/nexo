@@ -20,6 +20,19 @@ func (r *Router) registerScanRoutes(a *fiber.App) {
 	a.Get("/onsite/v1/scan-stats", r.auth("onsite:read"), r.scanStats)
 	a.Get("/onsite/v1/sessions", r.auth("onsite:read"), r.listSessions)
 	a.Post("/onsite/v1/sessions/:code/entries", r.auth("onsite:checkin"), r.enterSession)
+	a.Get("/onsite/v1/shifts", r.auth("onsite:read"), r.listShifts)
+}
+
+func (r *Router) listShifts(c fiber.Ctx) error {
+	event := c.Query("event_id")
+	if event == "" {
+		return problem(c, 400, "invalid_query", "event_id es obligatorio")
+	}
+	items, err := r.DB.ListShifts(c.Context(), event, claims(c).TenantID)
+	if err != nil {
+		return problem(c, 503, "persistence_unavailable", "no se pudieron leer los turnos")
+	}
+	return c.JSON(fiber.Map{"items": items})
 }
 
 type scanBody struct {

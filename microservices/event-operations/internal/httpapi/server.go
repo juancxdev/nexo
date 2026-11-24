@@ -39,7 +39,7 @@ func (s *Server) routes() {
 			c.Set("Access-Control-Allow-Origin", origin)
 			c.Set("Vary", "Origin")
 		}
-		c.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Mock-Tenant, X-Mock-Actor")
+		c.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Mock-Tenant, X-Mock-Actor, X-Mock-Role")
 		c.Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 		if c.Method() == "OPTIONS" {
 			return c.SendStatus(204)

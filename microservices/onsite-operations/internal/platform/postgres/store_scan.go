@@ -384,3 +384,36 @@ func (s *Store) EnterSession(ctx context.Context, event, session, ticketID, raw,
 	}
 	return saved, tx.Commit(ctx)
 }
+
+// ShiftView es un turno con su dispositivo, para la pantalla de supervisión.
+type ShiftView struct {
+	ID          string     `json:"id"`
+	EventID     string     `json:"event_id"`
+	Scope       string     `json:"scope"`
+	DeviceID    string     `json:"device_id"`
+	DeviceLabel string     `json:"device_label"`
+	ActorID     string     `json:"actor_id"`
+	Status      string     `json:"status"`
+	OpenedAt    time.Time  `json:"opened_at"`
+	ClosedAt    *time.Time `json:"closed_at"`
+}
+
+// ListShifts lista los turnos recientes del evento (abiertos primero).
+func (s *Store) ListShifts(ctx context.Context, event, tenant string) ([]ShiftView, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT sh.id::text,e.source_event_id,sc.code,sh.device_id::text,d.label,sh.actor_id::text,sh.status,sh.opened_at,sh.closed_at
+		FROM onsite.shifts sh JOIN onsite.events e ON e.id=sh.event_id JOIN onsite.scopes sc ON sc.id=sh.scope_id JOIN onsite.devices d ON d.id=sh.device_id
+		WHERE sh.tenant_id=$1::uuid AND e.source_event_id=$2 ORDER BY (sh.status='open') DESC, sh.opened_at DESC LIMIT 100`, tenant, event)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ShiftView{}
+	for rows.Next() {
+		var v ShiftView
+		if err := rows.Scan(&v.ID, &v.EventID, &v.Scope, &v.DeviceID, &v.DeviceLabel, &v.ActorID, &v.Status, &v.OpenedAt, &v.ClosedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
