@@ -3,6 +3,8 @@ package worker
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -10,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"nexo-event-operations/internal/reports"
 	"nexo-event-operations/internal/secureclaims"
 )
 
@@ -35,21 +38,48 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
+// tickReports genera los reportes pendientes con datos reales (antes marcaba
+// "succeeded" sin generar ningún archivo) y purga los vencidos.
 func (w *Worker) tickReports(ctx context.Context) {
-	rows, err := w.DB.Query(ctx, `SELECT id::text,event_id,scope,format FROM operations.report_jobs WHERE status='pending' AND expires_at>now() LIMIT 10`)
+	_, _ = w.DB.Exec(ctx, `UPDATE operations.report_jobs SET status='expired',artifact=NULL,updated_at=now() WHERE status IN ('pending','running','succeeded','failed') AND expires_at<=now()`)
+	rows, err := w.DB.Query(ctx, `WITH claimed AS (SELECT id FROM operations.report_jobs WHERE status='pending' AND expires_at>now() AND (lease_until IS NULL OR lease_until<now()) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 5)
+		UPDATE operations.report_jobs j SET status='running',progress=25,attempts=attempts+1,lease_until=now()+interval '60 seconds',updated_at=now() FROM claimed WHERE j.id=claimed.id
+		RETURNING j.id::text,j.tenant_id::text,j.event_id,j.scope,j.format,j.report_type`)
 	if err != nil {
 		return
 	}
-	defer rows.Close()
+	type job struct{ id, tenant, event, scope, format, kind string }
+	var jobs []job
 	for rows.Next() {
-		var id, eventID, scope, format string
-		if rows.Scan(&id, &eventID, &scope, &format) != nil {
-			continue
+		var j job
+		if rows.Scan(&j.id, &j.tenant, &j.event, &j.scope, &j.format, &j.kind) == nil {
+			jobs = append(jobs, j)
 		}
-		_, _ = w.DB.Exec(ctx, `UPDATE operations.report_jobs SET status='running',progress=25,updated_at=now() WHERE id=$1::uuid AND status='pending'`, id)
-		_, _ = w.DB.Exec(ctx, `UPDATE operations.report_jobs SET status='succeeded',progress=100,artifact_key=$2,artifact_sha256=encode(digest($2,'sha256'),'hex'),updated_at=now() WHERE id=$1::uuid AND status='running'`, id, fmt.Sprintf("reports/%s.%s", id, format))
+	}
+	rows.Close()
+	for _, j := range jobs {
+		w.runReport(ctx, j.id, j.tenant, j.event, j.scope, j.format, j.kind)
 	}
 }
+
+func (w *Worker) runReport(ctx context.Context, id, tenant, event, scope, format, kind string) {
+	table, err := reports.Build(ctx, w.DB, kind, tenant, event, scope)
+	if err != nil {
+		_, _ = w.DB.Exec(ctx, `UPDATE operations.report_jobs SET status='failed',error_code=$2,lease_until=NULL,updated_at=now() WHERE id=$1::uuid AND status='running'`, id, "source_unavailable")
+		return
+	}
+	_, _ = w.DB.Exec(ctx, `UPDATE operations.report_jobs SET progress=75,updated_at=now() WHERE id=$1::uuid AND status='running'`, id)
+	content, contentType, err := reports.Encode(table, format, kind, event, time.Now())
+	if err != nil {
+		_, _ = w.DB.Exec(ctx, `UPDATE operations.report_jobs SET status='failed',error_code='encoding_failed',lease_until=NULL,updated_at=now() WHERE id=$1::uuid AND status='running'`, id)
+		return
+	}
+	sum := sha256.Sum256(content)
+	// Si alguien canceló mientras se generaba, el WHERE status='running' no lo pisa.
+	_, _ = w.DB.Exec(ctx, `UPDATE operations.report_jobs SET status='succeeded',progress=100,artifact=$2,content_type=$3,row_count=$4,artifact_key=$5,artifact_sha256=$6,error_code=NULL,lease_until=NULL,updated_at=now() WHERE id=$1::uuid AND status='running'`,
+		id, content, contentType, len(table.Rows), fmt.Sprintf("reports/%s.%s", id, format), hex.EncodeToString(sum[:]))
+}
+
 func (w *Worker) tick(ctx context.Context) {
 	rows, err := w.DB.Query(ctx, `WITH claimed AS (SELECT id FROM integration.hukid_deliveries WHERE state IN ('pending','request_created','offer_redeemed') AND next_attempt_at<=now() AND (lease_until IS NULL OR lease_until<now()) ORDER BY next_attempt_at FOR UPDATE SKIP LOCKED LIMIT 20) UPDATE integration.hukid_deliveries d SET lease_until=now()+interval '30 seconds' FROM claimed WHERE d.id=claimed.id RETURNING d.id::text`)
 	if err != nil {
@@ -188,3 +218,6 @@ func (w *Worker) fail(ctx context.Context, id, code string) error {
 	_, err := w.DB.Exec(ctx, `UPDATE integration.hukid_deliveries SET state='failed',attempts=attempts+1,last_error_code=$2,lease_until=NULL,updated_at=now() WHERE id=$1::uuid`, id, code)
 	return err
 }
+
+// ProcessReportsOnce ejecuta una pasada del generador de reportes (pruebas y operación manual).
+func (w *Worker) ProcessReportsOnce(ctx context.Context) { w.tickReports(ctx) }

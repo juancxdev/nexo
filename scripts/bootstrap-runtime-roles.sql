@@ -60,3 +60,16 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA onsite GRANT SELECT, INSERT, UPDATE, DELETE O
 ALTER DEFAULT PRIVILEGES IN SCHEMA onsite GRANT USAGE, SELECT ON SEQUENCES TO onsite_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA operations, certificates, integration GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO operations_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA operations, certificates, integration GRANT USAGE, SELECT ON SEQUENCES TO operations_app;
+
+-- Contratos de lectura entre servicios: Event Operations sólo lee vistas versionadas
+-- de Onsite y Participation (nunca sus tablas).
+DO $$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='onsite_contract') THEN
+    GRANT USAGE ON SCHEMA onsite_contract TO operations_app;
+    GRANT SELECT ON ALL TABLES IN SCHEMA onsite_contract TO operations_app;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname='participation_contract') THEN
+    GRANT USAGE ON SCHEMA participation_contract TO operations_app;
+    GRANT SELECT ON ALL TABLES IN SCHEMA participation_contract TO operations_app;
+  END IF;
+END $$;
