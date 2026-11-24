@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -10,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -21,12 +23,14 @@ import (
 )
 
 type Server struct {
-	DB  *pgxpool.Pool
-	App *fiber.App
+	DB            *pgxpool.Pool
+	App           *fiber.App
+	OperationsURL string
+	InternalToken string
 }
 
-func New(db *pgxpool.Pool) *Server {
-	s := &Server{DB: db, App: fiber.New(fiber.Config{AppName: "Nexo Participation"})}
+func New(db *pgxpool.Pool, operationsURL, internalToken string) *Server {
+	s := &Server{DB: db, App: fiber.New(fiber.Config{AppName: "Nexo Participation"}), OperationsURL: strings.TrimRight(operationsURL, "/"), InternalToken: internalToken}
 	s.routes()
 	return s
 }
@@ -59,6 +63,7 @@ func (s *Server) routes() {
 	a.Get("/participation/public/v1/sites/:site/events/:event/form", s.form)
 	a.Post("/participation/public/v1/sites/:site/events/:event/registrations", s.register)
 	a.Get("/participation/self/v1/registrations/:id/ticket", s.ticket)
+	a.Get("/participation/self/v1/registrations/:id/credential", s.credential)
 }
 
 type formRow struct {
@@ -122,14 +127,15 @@ func (s *Server) register(c fiber.Ctx) error {
 	var encryptedToken []byte
 	var token string
 	var existingEventID string
-	err := s.DB.QueryRow(c.Context(), `SELECT id::text,request_hash,state,waitlist_position,ticket_id,self_access_token_ciphertext FROM participation.registrations WHERE form_id=(SELECT id FROM participation.forms WHERE site_slug=$1 AND event_slug=$2) AND idempotency_key=$3`, c.Params("site"), c.Params("event"), key).Scan(&existing, &existingHash, &existingState, &wait, &ticket, &encryptedToken)
+	var existingHukidState string
+	err := s.DB.QueryRow(c.Context(), `SELECT id::text,request_hash,state,waitlist_position,ticket_id,self_access_token_ciphertext,hukid_state FROM participation.registrations WHERE form_id=(SELECT id FROM participation.forms WHERE site_slug=$1 AND event_slug=$2) AND idempotency_key=$3`, c.Params("site"), c.Params("event"), key).Scan(&existing, &existingHash, &existingState, &wait, &ticket, &encryptedToken, &existingHukidState)
 	if err == nil {
 		_ = s.DB.QueryRow(c.Context(), `SELECT event_id FROM participation.forms WHERE site_slug=$1 AND event_slug=$2`, c.Params("site"), c.Params("event")).Scan(&existingEventID)
 		if existingHash != hash {
 			return problem(c, 409, "idempotency_key_reused", "el Idempotency-Key ya fue usado con otro payload")
 		}
 		token, _ = unprotectToken(encryptedToken)
-		return receipt(c, existing, existingEventID, existingState, wait, ticket, token)
+		return receipt(c, existing, existingEventID, existingState, wait, ticket, token, existingHukidState)
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return problem(c, 503, "persistence_unavailable", "no se pudo consultar el registro")
@@ -139,11 +145,11 @@ func (s *Server) register(c fiber.Ctx) error {
 		return problem(c, 503, "persistence_unavailable", "no se pudo iniciar el registro")
 	}
 	defer tx.Rollback(c.Context())
-	var formID, eventID, formVersion, consentVersion string
+	var formID, eventID, formVersion, consentVersion, tenantID string
 	var remaining int
 	var waitlist bool
 	var binding string
-	err = tx.QueryRow(c.Context(), `SELECT id::text,event_id,form_version_id::text,consent_version,remaining,waitlist_enabled,binding_state FROM participation.forms WHERE site_slug=$1 AND event_slug=$2 FOR UPDATE`, c.Params("site"), c.Params("event")).Scan(&formID, &eventID, &formVersion, &consentVersion, &remaining, &waitlist, &binding)
+	err = tx.QueryRow(c.Context(), `SELECT id::text,event_id,form_version_id::text,consent_version,remaining,waitlist_enabled,binding_state,tenant_id::text FROM participation.forms WHERE site_slug=$1 AND event_slug=$2 FOR UPDATE`, c.Params("site"), c.Params("event")).Scan(&formID, &eventID, &formVersion, &consentVersion, &remaining, &waitlist, &binding, &tenantID)
 	if err != nil {
 		return problem(c, 404, "form_not_found", "formulario no encontrado")
 	}
@@ -198,10 +204,36 @@ func (s *Server) register(c fiber.Ctx) error {
 	if err = tx.Commit(c.Context()); err != nil {
 		return problem(c, 503, "persistence_unavailable", "no se pudo confirmar el registro")
 	}
-	return receipt(c, id.String(), eventID, state, pos, ticketID, token)
+	hukidState := "not_requested"
+	if state == "confirmed" && s.OperationsURL != "" && s.InternalToken != "" {
+		hukidState = s.requestHukID(c.Context(), tenantID, eventID, id.String(), *ticketID)
+		_, _ = s.DB.Exec(c.Context(), `UPDATE participation.registrations SET hukid_state=$2 WHERE id=$1::uuid`, id, hukidState)
+	}
+	return receipt(c, id.String(), eventID, state, pos, ticketID, token, hukidState)
 }
-func receipt(c fiber.Ctx, id, eventID, state string, pos *int, ticket *string, token string) error {
-	return c.Status(201).JSON(fiber.Map{"id": id, "event_id": eventID, "state": state, "waitlist_position": pos, "ticket_id": ticket, "self_access_token": token})
+
+func (s *Server) requestHukID(ctx context.Context, tenantID, eventID, registrationID, ticketID string) string {
+	body, _ := json.Marshal(map[string]string{"event_id": eventID, "registration_id": registrationID, "ticket_id": ticketID})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.OperationsURL+"/internal/v1/participation-credentials", bytes.NewReader(body))
+	if err != nil {
+		return "request_failed"
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-Service-Token", s.InternalToken)
+	req.Header.Set("X-Tenant-Id", tenantID)
+	req.Header.Set("Idempotency-Key", "participation:"+registrationID)
+	resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(req)
+	if err != nil {
+		return "pending"
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "request_failed"
+	}
+	return "pending"
+}
+func receipt(c fiber.Ctx, id, eventID, state string, pos *int, ticket *string, token, hukidState string) error {
+	return c.Status(201).JSON(fiber.Map{"id": id, "event_id": eventID, "state": state, "waitlist_position": pos, "ticket_id": ticket, "self_access_token": token, "hukid_state": hukidState})
 }
 func (s *Server) ticket(c fiber.Ctx) error {
 	auth := strings.TrimSpace(strings.TrimPrefix(c.Get("Authorization"), "Bearer "))
@@ -217,6 +249,42 @@ func (s *Server) ticket(c fiber.Ctx) error {
 		return problem(c, 409, "ticket_unavailable", "ticket no disponible")
 	}
 	return c.JSON(fiber.Map{"id": id, "state": state, "ticket_jws": jws, "expires_at": expires})
+}
+
+func (s *Server) credential(c fiber.Ctx) error {
+	auth := strings.TrimSpace(strings.TrimPrefix(c.Get("Authorization"), "Bearer "))
+	if auth == "" {
+		return problem(c, 401, "unauthorized", "token de acceso requerido")
+	}
+	var registrationID, tokenHash, tenantID string
+	if err := s.DB.QueryRow(c.Context(), `SELECT r.id::text,r.self_access_token_hash,f.tenant_id::text FROM participation.registrations r JOIN participation.forms f ON f.id=r.form_id WHERE r.id=$1::uuid`, c.Params("id")).Scan(&registrationID, &tokenHash, &tenantID); err != nil || tokenHash != hashString(auth) {
+		return problem(c, 404, "registration_not_found", "registro no encontrado")
+	}
+	if s.OperationsURL == "" || s.InternalToken == "" {
+		return c.JSON(fiber.Map{"state": "not_configured"})
+	}
+	req, err := http.NewRequestWithContext(c.Context(), http.MethodGet, s.OperationsURL+"/internal/v1/participation-credentials/"+registrationID, nil)
+	if err != nil {
+		return problem(c, 503, "hukid_unavailable", "no se pudo consultar HukID")
+	}
+	req.Header.Set("X-Internal-Service-Token", s.InternalToken)
+	req.Header.Set("X-Tenant-Id", tenantID)
+	resp, err := (&http.Client{Timeout: 3 * time.Second}).Do(req)
+	if err != nil {
+		return problem(c, 503, "hukid_unavailable", "no se pudo consultar HukID")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == 404 {
+		return c.JSON(fiber.Map{"state": "pending"})
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return problem(c, 503, "hukid_unavailable", "no se pudo consultar HukID")
+	}
+	var payload map[string]any
+	if json.NewDecoder(resp.Body).Decode(&payload) != nil {
+		return problem(c, 503, "hukid_invalid_response", "respuesta HukID inválida")
+	}
+	return c.JSON(payload)
 }
 func hashString(v string) string {
 	h := sha256.Sum256([]byte(v))

@@ -30,7 +30,7 @@ func main() {
 	if addr == "" {
 		addr = ":8084"
 	}
-	app := api.New(db)
+	app := api.New(db, os.Getenv("EVENT_OPERATIONS_URL"), os.Getenv("NEXO_INTERNAL_SERVICE_TOKEN"))
 	log.Printf("Participation API escuchando en %s", addr)
 	log.Fatal(app.App.Listen(addr, fiber.ListenConfig{EnablePrintRoutes: false}))
 }

@@ -139,6 +139,10 @@ const messages = {
     "participation.ticketPreparing": "Preparando código QR…",
     "participation.ticketQrAlt": "Código QR del ticket",
     "participation.ticketDownload": "Descargar QR",
+    "participation.credentialAvailable": "Credencial HukID disponible",
+    "participation.credentialInstructions": "Escanea este código con la wallet HukID para guardar tu boleto digital.",
+    "participation.credentialPreparing": "Preparando credencial HukID",
+    "participation.credentialPreparingDescription": "La oferta de emisión estará disponible en unos segundos.",
   },
   en: {
     "nav.workspace": "Workspace",
@@ -275,6 +279,10 @@ const messages = {
     "participation.ticketPreparing": "Preparing QR code…",
     "participation.ticketQrAlt": "Ticket QR code",
     "participation.ticketDownload": "Download QR",
+    "participation.credentialAvailable": "HukID credential available",
+    "participation.credentialInstructions": "Scan this code with the HukID wallet to save your digital ticket.",
+    "participation.credentialPreparing": "Preparing HukID credential",
+    "participation.credentialPreparingDescription": "The issuance offer will be available in a few seconds.",
   },
 } as const;
 export function readLocale(): Locale {
