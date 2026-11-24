@@ -5,6 +5,8 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 go build -o /out/participation ./cmd/api
 FROM alpine:3.22
+RUN addgroup -S nexo && adduser -S -G nexo nexo
 COPY --from=build /out/participation /usr/local/bin/participation
+USER nexo
 EXPOSE 8084
 ENTRYPOINT ["/usr/local/bin/participation"]

@@ -20,6 +20,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
+	"nexo-onsite-operations/internal/hukid"
 	"nexo-onsite-operations/internal/onsite/application"
 	"nexo-onsite-operations/internal/onsite/domain"
 	"nexo-onsite-operations/internal/onsite/ports"
@@ -27,13 +28,14 @@ import (
 )
 
 type Router struct {
-	App     *fiber.App
-	Service application.Service
-	DB      *postgres.Store
+	App      *fiber.App
+	Service  application.Service
+	DB       *postgres.Store
+	Verifier *hukid.Client
 }
 
 func NewRouter(db *postgres.Store) *Router {
-	r := &Router{App: fiber.New(fiber.Config{AppName: "Nexo Onsite Operations", BodyLimit: 1 << 20}), DB: db, Service: application.Service{Tickets: db, Attendance: db, Devices: db}}
+	r := &Router{App: fiber.New(fiber.Config{AppName: "Nexo Onsite Operations", BodyLimit: 1 << 20}), DB: db, Verifier: hukid.NewFromEnv(os.Getenv), Service: application.Service{Tickets: db, Attendance: db, Devices: db}}
 	r.routes()
 	return r
 }
@@ -67,7 +69,8 @@ func (r *Router) auth(scope string) fiber.Handler {
 		tenant := c.Get("X-Mock-Tenant")
 		device := c.Get("X-Mock-Device")
 		authz := strings.TrimSpace(c.Get("Authorization"))
-		if env != "development" && env != "test" && (role != "" || actor != "" || tenant != "" || device != "") {
+		testMode := env == "test" && strings.EqualFold(os.Getenv("NEXO_TEST_MODE"), "true")
+		if !testMode && (role != "" || actor != "" || tenant != "" || device != "") {
 			return problem(c, 401, "unauthorized", "mock claims are disabled")
 		}
 		if authz != "" {
@@ -85,7 +88,7 @@ func (r *Router) auth(scope string) fiber.Handler {
 			c.Locals("claims", verified)
 			return c.Next()
 		}
-		if env != "development" && env != "test" && authz == "" {
+		if !testMode && authz == "" {
 			return problem(c, 401, "unauthorized", "Authorization es obligatorio")
 		}
 		if role == "" {
@@ -229,7 +232,7 @@ func (r *Router) routes() {
 			c.Set("Access-Control-Allow-Origin", origin)
 			c.Set("Vary", "Origin")
 		}
-		c.Set("Access-Control-Allow-Headers", "Content-Type, Idempotency-Key, X-Mock-Role, X-Mock-Actor, X-Mock-Tenant, X-Mock-Device, X-Request-Id")
+		c.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Correlation-Id, X-Request-Id")
 		c.Set("Access-Control-Allow-Methods", "GET,POST,PATCH,OPTIONS")
 		if c.Method() == "OPTIONS" {
 			return c.SendStatus(204)
@@ -259,6 +262,94 @@ func (r *Router) routes() {
 	a.Post("/onsite/v1/attendance/facts/:id/voids", r.auth("onsite:void"), r.voidFact)
 	a.Get("/onsite/v1/attendance", r.auth("onsite:read"), r.list)
 	a.Get("/onsite/v1/dashboard", r.auth("onsite:read"), r.dashboard)
+	a.Post("/onsite/v1/verification-sessions", r.auth("onsite:checkin"), r.startVerification)
+	a.Get("/onsite/v1/verification-sessions/:id", r.auth("onsite:checkin"), r.getVerification)
+}
+
+func (r *Router) startVerification(c fiber.Ctx) error {
+	var body struct {
+		TTLSeconds int    `json:"ttl_seconds"`
+		EventID    string `json:"event_id"`
+		Scope      string `json:"scope"`
+		TicketID   string `json:"ticket_id"`
+	}
+	if len(c.Body()) > 0 && json.Unmarshal(c.Body(), &body) != nil {
+		return problem(c, 400, "invalid_body", "ttl_seconds debe ser un entero")
+	}
+	if body.EventID == "" || body.Scope == "" || body.TicketID == "" {
+		return problem(c, 400, "invalid_body", "event_id, scope y ticket_id son obligatorios")
+	}
+	if body.TTLSeconds != 0 && (body.TTLSeconds < 60 || body.TTLSeconds > 900) {
+		return problem(c, 400, "invalid_ttl", "ttl_seconds debe estar entre 60 y 900")
+	}
+	if err := r.ensureAssignment(c, body.EventID, body.Scope); err != nil {
+		return err
+	}
+	key := strings.TrimSpace(c.Get("Idempotency-Key"))
+	if _, err := uuid.Parse(key); err != nil {
+		return problem(c, 400, "idempotency_key_required", "Idempotency-Key debe ser UUID")
+	}
+	var existingID, existingStatus, existingEvent, existingScope, existingTicket string
+	if err := r.DB.Pool.QueryRow(c.Context(), `SELECT session_id,status,event_id,scope,ticket_id FROM onsite.hukid_verification_sessions WHERE tenant_id=$1::uuid AND idempotency_key=$2`, claims(c).TenantID, key).Scan(&existingID, &existingStatus, &existingEvent, &existingScope, &existingTicket); err == nil {
+		if existingEvent != body.EventID || existingScope != body.Scope || existingTicket != body.TicketID {
+			return problem(c, 409, "idempotency_key_reused", "la clave fue usada con otro contexto")
+		}
+		return c.Status(200).JSON(fiber.Map{"session_id": existingID, "status": existingStatus, "replayed": true})
+	}
+	result, err := r.Verifier.StartVerification(c.Context(), claims(c).TenantID, body.TTLSeconds)
+	if errors.Is(err, hukid.ErrNotConfigured) {
+		return problem(c, 503, "hukid_not_configured", "el nodo HukID no está configurado")
+	}
+	if err != nil {
+		return hukidProblem(c, err, "no se pudo iniciar la verificación HukID")
+	}
+	if _, err = r.DB.Pool.Exec(c.Context(), `INSERT INTO onsite.hukid_verification_sessions(session_id,tenant_id,event_id,scope,ticket_id,idempotency_key,expires_at) VALUES($1,$2::uuid,$3,$4,$5,$6,$7)`, result.SessionID, claims(c).TenantID, body.EventID, body.Scope, body.TicketID, key, result.ExpiresAt); err != nil {
+		return problem(c, 503, "persistence_unavailable", "no se pudo guardar la sesión HukID")
+	}
+	return c.Status(201).JSON(result)
+}
+
+func (r *Router) getVerification(c fiber.Ctx) error {
+	var localTenant string
+	if err := r.DB.Pool.QueryRow(c.Context(), `SELECT tenant_id::text FROM onsite.hukid_verification_sessions WHERE session_id=$1 AND tenant_id=$2::uuid`, c.Params("id"), claims(c).TenantID).Scan(&localTenant); err != nil {
+		return problem(c, 404, "verification_session_not_found", "sesión no encontrada")
+	}
+	result, err := r.Verifier.GetVerification(c.Context(), claims(c).TenantID, c.Params("id"))
+	if errors.Is(err, hukid.ErrNotConfigured) {
+		return problem(c, 503, "hukid_not_configured", "el nodo HukID no está configurado")
+	}
+	if err != nil {
+		return hukidProblem(c, err, "no se pudo consultar la verificación HukID")
+	}
+	var eventID, scope, ticketID, oldStatus, idem string
+	if err := r.DB.Pool.QueryRow(c.Context(), `SELECT event_id,scope,ticket_id,status,idempotency_key FROM onsite.hukid_verification_sessions WHERE session_id=$1 AND tenant_id=$2::uuid`, c.Params("id"), claims(c).TenantID).Scan(&eventID, &scope, &ticketID, &oldStatus, &idem); err != nil {
+		return problem(c, 404, "verification_session_not_found", "sesión no encontrada")
+	}
+	if result.Status == "completed" && result.Result == "pass" && oldStatus != "completed" {
+		hash := sha256.Sum256([]byte(c.Params("id") + "|" + ticketID + "|" + eventID + "|" + scope))
+		fact, checkErr := r.Service.CheckIn(c.Context(), domain.AttendanceFact{TicketID: ticketID, EventID: eventID, Scope: scope}, hex.EncodeToString(hash[:]), claims(c), idem)
+		if checkErr != nil && !errors.Is(checkErr, domain.ErrAlreadyPresent) {
+			return problem(c, 422, "verification_checkin_failed", "la verificación fue válida pero no se pudo registrar el check-in")
+		}
+		_, _ = r.DB.Pool.Exec(c.Context(), `UPDATE onsite.hukid_verification_sessions SET status='completed',result='pass',completed_at=COALESCE(completed_at,now()) WHERE session_id=$1`, c.Params("id"))
+		return c.JSON(fiber.Map{"session": result, "check_in": fiber.Map{"id": fact.ID, "ticket_id": ticketID, "event_id": eventID, "scope": scope, "status": "present"}, "replayed": errors.Is(checkErr, domain.ErrAlreadyPresent)})
+	}
+	if result.Status == "completed" || result.Status == "expired" {
+		_, _ = r.DB.Pool.Exec(c.Context(), `UPDATE onsite.hukid_verification_sessions SET status=$2,result=$3,completed_at=CASE WHEN $2='completed' THEN now() ELSE completed_at END WHERE session_id=$1`, c.Params("id"), result.Status, result.Result)
+	}
+	return c.JSON(result)
+}
+
+func hukidProblem(c fiber.Ctx, err error, fallback string) error {
+	var httpErr *hukid.HTTPError
+	if errors.As(err, &httpErr) {
+		code := map[int]string{401: "hukid_unauthorized", 403: "hukid_forbidden", 404: "verification_not_found", 422: "hukid_invalid_request", 429: "hukid_rate_limited", 503: "hukid_unavailable"}[httpErr.Status]
+		if code == "" {
+			code = "hukid_upstream_error"
+		}
+		return problem(c, httpErr.Status, code, fallback)
+	}
+	return problem(c, 503, "hukid_unavailable", fallback)
 }
 
 func allowedOrigin(origin string) string {
@@ -384,9 +475,10 @@ func (r *Router) search(c fiber.Ctx) error {
 }
 func (r *Router) checkIn(c fiber.Ctx) error {
 	var b struct {
-		TicketID string `json:"ticket_id"`
-		EventID  string `json:"event_id"`
-		Scope    string `json:"scope"`
+		TicketID              string `json:"ticket_id"`
+		EventID               string `json:"event_id"`
+		Scope                 string `json:"scope"`
+		VerificationSessionID string `json:"verification_session_id"`
 	}
 	if err := json.Unmarshal(c.Body(), &b); err != nil {
 		return problem(c, 400, "invalid_body", "JSON inválido")
@@ -396,6 +488,16 @@ func (r *Router) checkIn(c fiber.Ctx) error {
 	}
 	if err := r.ensureAssignment(c, b.EventID, b.Scope); err != nil {
 		return err
+	}
+	if os.Getenv("APP_ENV") == "production" {
+		if b.VerificationSessionID == "" {
+			return problem(c, 403, "verification_required", "se requiere una presentación HukID válida")
+		}
+		var sessionEvent, sessionScope, sessionTicket, sessionStatus, sessionResult string
+		err := r.DB.Pool.QueryRow(c.Context(), `SELECT event_id,scope,ticket_id,status,COALESCE(result,'') FROM onsite.hukid_verification_sessions WHERE session_id=$1 AND tenant_id=$2::uuid`, b.VerificationSessionID, claims(c).TenantID).Scan(&sessionEvent, &sessionScope, &sessionTicket, &sessionStatus, &sessionResult)
+		if err != nil || sessionEvent != b.EventID || sessionScope != b.Scope || sessionTicket != b.TicketID || sessionStatus != "completed" || sessionResult != "pass" {
+			return problem(c, 403, "verification_required", "la presentación HukID no corresponde al ticket")
+		}
 	}
 	key := strings.TrimSpace(c.Get("Idempotency-Key"))
 	if _, err := uuid.Parse(key); err != nil {

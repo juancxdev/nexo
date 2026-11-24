@@ -1,0 +1,47 @@
+package hukid
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+func TestClientStartsAndReadsVerificationSession(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer operator-token" {
+			t.Fatal("missing bearer")
+		}
+		if r.Method == http.MethodPost {
+			if r.URL.Path != "/v1/operator/tenants/tenant-1/verification-sessions" {
+				t.Fatalf("path=%s", r.URL.Path)
+			}
+			if r.Header.Get("Content-Type") != "application/json" {
+				t.Fatalf("content type=%s", r.Header.Get("Content-Type"))
+			}
+			body, _ := io.ReadAll(r.Body)
+			if !bytes.Equal(bytes.TrimSpace(body), []byte(`{"ttlSeconds":300}`)) {
+				t.Fatalf("body=%s", body)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"sessionId": "session-1", "launchUri": "openid4vp://request/1", "expiresAt": "2026-11-24T12:00:00Z"})
+			return
+		}
+		if r.URL.Path != "/v1/operator/tenants/tenant-1/verification-sessions/session-1" {
+			t.Fatalf("path=%s", r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"sessionId": "session-1", "status": "completed", "result": "pass", "codes": []string{}, "reportDigest": "sha256:" + "0000000000000000000000000000000000000000000000000000000000000000", "createdAt": "2026-11-24T11:55:00Z", "expiresAt": "2026-11-24T12:00:00Z"})
+	}))
+	defer server.Close()
+	client := &Client{BaseURL: server.URL, OperatorToken: "operator-token", HTTP: server.Client()}
+	created, err := client.StartVerification(context.Background(), "tenant-1", 300)
+	if err != nil || created.SessionID != "session-1" {
+		t.Fatalf("create: %+v %v", created, err)
+	}
+	result, err := client.GetVerification(context.Background(), "tenant-1", created.SessionID)
+	if err != nil || result.Result != "pass" {
+		t.Fatalf("read: %+v %v", result, err)
+	}
+}

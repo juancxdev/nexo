@@ -26,10 +26,21 @@ type issuance struct {
 	IdempotencyKey            string    `json:"-"`
 }
 type server struct {
-	mu       sync.Mutex
-	requests map[string]issuance
-	tokens   map[string]time.Time
-	faults   map[string]faultConfig
+	mu           sync.Mutex
+	requests     map[string]issuance
+	tokens       map[string]time.Time
+	verification map[string]verification
+	faults       map[string]faultConfig
+}
+type verification struct {
+	SessionID    string    `json:"sessionId"`
+	Status       string    `json:"status"`
+	Result       string    `json:"result,omitempty"`
+	Codes        []string  `json:"codes,omitempty"`
+	ReportDigest string    `json:"reportDigest,omitempty"`
+	CreatedAt    time.Time `json:"createdAt"`
+	ExpiresAt    time.Time `json:"expiresAt"`
+	CompletedAt  time.Time `json:"completedAt,omitempty"`
 }
 type faultConfig struct {
 	Status    int
@@ -37,7 +48,7 @@ type faultConfig struct {
 }
 
 func main() {
-	s := &server{requests: map[string]issuance{}, tokens: map[string]time.Time{}, faults: map[string]faultConfig{}}
+	s := &server{requests: map[string]issuance{}, tokens: map[string]time.Time{}, verification: map[string]verification{}, faults: map[string]faultConfig{}}
 	a := newApp(s)
 	addr := os.Getenv("HUKID_SIMULATOR_ADDR")
 	if addr == "" {
@@ -55,11 +66,16 @@ func newApp(s *server) *fiber.App {
 	v1.Post("/issuance-requests", s.create)
 	v1.Get("/issuance-requests/:id", s.get)
 	v1.Post("/issuance-requests/:id/cancellations", s.cancel)
+	v1.Post("/operator/tenants/:tenant/verification-sessions", s.startVerification)
+	v1.Get("/operator/tenants/:tenant/verification-sessions/:id", s.getVerification)
 	t := a.Group("/__test")
 	t.Post("/reset", s.reset)
 	t.Post("/issuance-requests/:id/redeem", s.redeem)
 	t.Post("/issuance-requests/:id/issue", s.issue)
 	t.Post("/faults", s.setFault)
+	t.Post("/verification/:id/pass", s.passVerification)
+	t.Post("/verification/:id/fail", s.failVerification)
+	t.Post("/verification/:id/expire", s.expireVerification)
 	return a
 }
 func (s *server) token(c fiber.Ctx) error {
@@ -81,6 +97,9 @@ func (s *server) auth(c fiber.Ctx) error {
 		return problem(c, 401, "invalid_token", "token ausente")
 	}
 	token := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+	if token == "dev-operator" && (os.Getenv("APP_ENV") == "development" || os.Getenv("APP_ENV") == "test") {
+		return c.Next()
+	}
 	s.mu.Lock()
 	expires, ok := s.tokens[token]
 	s.mu.Unlock()
@@ -88,6 +107,74 @@ func (s *server) auth(c fiber.Ctx) error {
 		return problem(c, 401, "invalid_token", "token inválido o vencido")
 	}
 	return c.Next()
+}
+func (s *server) startVerification(c fiber.Ctx) error {
+	if strings.TrimSpace(c.Get("Authorization")) != "Bearer dev-operator" {
+		return problem(c, 401, "invalid_token", "token inválido")
+	}
+	var in struct {
+		TTLSeconds int `json:"ttlSeconds"`
+	}
+	_ = json.Unmarshal(c.Body(), &in)
+	if in.TTLSeconds < 60 || in.TTLSeconds > 900 {
+		in.TTLSeconds = 300
+	}
+	now := time.Now().UTC()
+	v := verification{SessionID: "vs_" + uuid.NewString(), Status: "pending", CreatedAt: now, ExpiresAt: now.Add(time.Duration(in.TTLSeconds) * time.Second)}
+	s.mu.Lock()
+	s.verification[v.SessionID] = v
+	s.mu.Unlock()
+	return c.Status(201).JSON(fiber.Map{"sessionId": v.SessionID, "launchUri": "openid4vp://verify/" + v.SessionID, "expiresAt": v.ExpiresAt})
+}
+func (s *server) getVerification(c fiber.Ctx) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.verification[c.Params("id")]
+	if !ok {
+		return problem(c, 404, "resource_not_found", "sesión no encontrada")
+	}
+	if time.Now().UTC().After(v.ExpiresAt) && v.Status == "pending" {
+		v.Status = "expired"
+		s.verification[v.SessionID] = v
+	}
+	return c.JSON(v)
+}
+func (s *server) setVerificationResult(c fiber.Ctx, result string) error {
+	if os.Getenv("APP_ENV") != "development" && os.Getenv("APP_ENV") != "test" {
+		return problem(c, 404, "not_found", "ruta no disponible")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.verification[c.Params("id")]
+	if !ok {
+		return problem(c, 404, "resource_not_found", "sesión no encontrada")
+	}
+	if v.Status == "expired" {
+		return problem(c, 409, "invalid_state_transition", "sesión expirada")
+	}
+	v.Status = "completed"
+	v.Result = result
+	v.CompletedAt = time.Now().UTC()
+	digest := sha256.Sum256([]byte(v.SessionID + "|" + result + "|" + v.CompletedAt.UTC().Format(time.RFC3339Nano)))
+	v.ReportDigest = hex.EncodeToString(digest[:])
+	s.verification[v.SessionID] = v
+	return c.JSON(v)
+}
+func (s *server) passVerification(c fiber.Ctx) error { return s.setVerificationResult(c, "pass") }
+func (s *server) failVerification(c fiber.Ctx) error { return s.setVerificationResult(c, "fail") }
+func (s *server) expireVerification(c fiber.Ctx) error {
+	if os.Getenv("APP_ENV") != "development" && os.Getenv("APP_ENV") != "test" {
+		return problem(c, 404, "not_found", "ruta no disponible")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.verification[c.Params("id")]
+	if !ok {
+		return problem(c, 404, "resource_not_found", "sesión no encontrada")
+	}
+	v.Status = "expired"
+	s.verification[v.SessionID] = v
+	return c.JSON(v)
 }
 func (s *server) create(c fiber.Ctx) error {
 	key := c.Get("Idempotency-Key")
@@ -117,11 +204,16 @@ func (s *server) create(c fiber.Ctx) error {
 		CredentialDefinition string         `json:"credentialDefinition"`
 		Claims               map[string]any `json:"claims"`
 		Delivery             struct {
-			ExpiresInSeconds int `json:"expiresInSeconds"`
+			ExpiresInSeconds int    `json:"expiresInSeconds"`
+			Flow             string `json:"flow"`
+			TxCodeRequired   bool   `json:"txCodeRequired"`
 		} `json:"delivery"`
 	}
 	if json.Unmarshal(body, &in) != nil || in.IssuerID == "" || in.CredentialDefinition == "" || in.Claims == nil {
 		return problem(c, 422, "claim_validation_failed", "issuerId, credentialDefinition y claims son obligatorios")
+	}
+	if in.Delivery.Flow != "" && in.Delivery.Flow != "pre-authorized_code" || in.Delivery.TxCodeRequired {
+		return problem(c, 422, "unsupported_delivery", "solo se admite pre-authorized_code sin tx_code")
 	}
 	now := time.Now().UTC()
 	ttl := in.Delivery.ExpiresInSeconds
@@ -200,6 +292,7 @@ func (s *server) reset(c fiber.Ctx) error {
 	defer s.mu.Unlock()
 	s.requests = map[string]issuance{}
 	s.tokens = map[string]time.Time{}
+	s.verification = map[string]verification{}
 	s.faults = map[string]faultConfig{}
 	return c.SendStatus(204)
 }

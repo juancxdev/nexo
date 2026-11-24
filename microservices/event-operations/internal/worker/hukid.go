@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	"nexo-event-operations/internal/secureclaims"
@@ -16,10 +17,17 @@ import (
 type Worker struct {
 	DB     *pgxpool.Pool
 	Client *http.Client
+	mu     sync.Mutex
+	tokens map[string]cachedToken
+}
+
+type cachedToken struct {
+	value     string
+	expiresAt time.Time
 }
 
 func New(db *pgxpool.Pool) *Worker {
-	return &Worker{DB: db, Client: &http.Client{Timeout: 8 * time.Second}}
+	return &Worker{DB: db, Client: &http.Client{Timeout: 8 * time.Second}, tokens: make(map[string]cachedToken)}
 }
 func (w *Worker) Run(ctx context.Context) {
 	t := time.NewTicker(2 * time.Second)
@@ -61,14 +69,15 @@ func (w *Worker) tick(ctx context.Context) {
 		if rows.Scan(&id) != nil {
 			continue
 		}
-		var key, state, requestID, base, oauth, certID, keyVersion string
+		var key, state, requestID, base, oauth, keyVersion string
+		var certID *string
 		var ciphertext, nonce []byte
 		if w.DB.QueryRow(ctx, `SELECT d.idempotency_key,d.state,COALESCE(d.hukid_request_id,''),c.base_url,c.oauth_url,d.certificate_id::text,d.claims_ciphertext,d.claims_nonce,d.claims_key_version FROM integration.hukid_deliveries d JOIN integration.hukid_configs c ON c.id=d.config_id WHERE d.id=$1::uuid`, id).Scan(&key, &state, &requestID, &base, &oauth, &certID, &ciphertext, &nonce, &keyVersion) == nil {
 			_ = w.process(ctx, id, key, state, requestID, base, oauth, certID, ciphertext, nonce, keyVersion)
 		}
 	}
 }
-func (w *Worker) process(ctx context.Context, id, key, state, requestID, base, oauth, certID string, ciphertext, nonce []byte, keyVersion string) error {
+func (w *Worker) process(ctx context.Context, id, key, state, requestID, base, oauth string, certID *string, ciphertext, nonce []byte, keyVersion string) error {
 	token, err := w.token(ctx, oauth)
 	if err != nil {
 		return w.retry(ctx, id, "token_unavailable")
@@ -78,15 +87,15 @@ func (w *Worker) process(ctx context.Context, id, key, state, requestID, base, o
 		if err != nil {
 			return w.fail(ctx, id, "claims_decryption_failed")
 		}
-		req, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/issuance-requests", bytes.NewReader(body))
-		req.Header.Set("Authorization", "Bearer "+token)
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Idempotency-Key", key)
-		resp, e := w.Client.Do(req)
+		resp, e := w.createRequest(ctx, base+"/issuance-requests", token, key, body)
 		if e != nil {
 			return w.retry(ctx, id, "network_error")
 		}
 		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusUnauthorized {
+			w.invalidateToken(oauth)
+			return w.retry(ctx, id, "hukid_401")
+		}
 		if resp.StatusCode == http.StatusUnprocessableEntity || resp.StatusCode == http.StatusConflict {
 			return w.fail(ctx, id, fmt.Sprintf("hukid_%d", resp.StatusCode))
 		}
@@ -107,8 +116,8 @@ func (w *Worker) process(ctx context.Context, id, key, state, requestID, base, o
 			return w.fail(ctx, id, "invalid_response")
 		}
 		_, err = w.DB.Exec(ctx, `UPDATE integration.hukid_deliveries SET state='request_created',hukid_request_id=$2,credential_offer_uri=$3,offer_expires_at=now()+interval '5 minutes',attempts=attempts+1,next_attempt_at=now()+interval '5 seconds',lease_until=NULL,updated_at=now() WHERE id=$1::uuid`, id, out.ID, out.Offer)
-		if err == nil {
-			_, _ = w.DB.Exec(ctx, `UPDATE certificates.certificates SET state='offer_available' WHERE id=$1::uuid`, certID)
+		if err == nil && certID != nil {
+			_, _ = w.DB.Exec(ctx, `UPDATE certificates.certificates SET state='offer_available' WHERE id=$1::uuid`, *certID)
 		}
 		return err
 	}
@@ -119,7 +128,17 @@ func (w *Worker) process(ctx context.Context, id, key, state, requestID, base, o
 		return w.retry(ctx, id, "network_error")
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized {
+		w.invalidateToken(oauth)
+		return w.retry(ctx, id, "hukid_401")
+	}
 	if resp.StatusCode >= 400 {
+		if resp.StatusCode == http.StatusUnprocessableEntity || resp.StatusCode == http.StatusConflict || resp.StatusCode == http.StatusNotFound {
+			return w.fail(ctx, id, fmt.Sprintf("hukid_%d", resp.StatusCode))
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			return w.retryAfter(ctx, id, "hukid_429", resp.Header.Get("Retry-After"))
+		}
 		return w.retry(ctx, id, fmt.Sprintf("hukid_%d", resp.StatusCode))
 	}
 	var out struct {
@@ -144,8 +163,8 @@ func (w *Worker) process(ctx context.Context, id, key, state, requestID, base, o
 		_, err = w.DB.Exec(ctx, `UPDATE integration.hukid_deliveries SET state=$2,credential_id=NULLIF($3,''),next_attempt_at=now()+interval '5 seconds',lease_until=NULL,updated_at=now() WHERE id=$1::uuid`, id, next, out.CredentialID)
 		if err == nil {
 			certificateState := map[string]string{"credential_issued": "credential_issued", "offer_redeemed": "offer_redeemed", "failed": "failed", "cancelled": "cancelled"}[next]
-			if certificateState != "" {
-				_, _ = w.DB.Exec(ctx, `UPDATE certificates.certificates SET state=$2 WHERE id=$1::uuid`, certID, certificateState)
+			if certificateState != "" && certID != nil {
+				_, _ = w.DB.Exec(ctx, `UPDATE certificates.certificates SET state=$2 WHERE id=$1::uuid`, *certID, certificateState)
 			}
 		}
 	} else {
@@ -154,6 +173,12 @@ func (w *Worker) process(ctx context.Context, id, key, state, requestID, base, o
 	return err
 }
 func (w *Worker) token(ctx context.Context, url string) (string, error) {
+	w.mu.Lock()
+	if cached, ok := w.tokens[url]; ok && time.Now().Before(cached.expiresAt) {
+		w.mu.Unlock()
+		return cached.value, nil
+	}
+	w.mu.Unlock()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBufferString("grant_type=client_credentials&scope=issuance:create%20issuance:read"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := w.Client.Do(req)
@@ -166,11 +191,36 @@ func (w *Worker) token(ctx context.Context, url string) (string, error) {
 	}
 	var out struct {
 		AccessToken string `json:"access_token"`
+		ExpiresIn   int    `json:"expires_in"`
 	}
 	if err = json.NewDecoder(resp.Body).Decode(&out); err != nil || out.AccessToken == "" {
 		return "", fmt.Errorf("invalid token")
 	}
+	ttl := time.Duration(out.ExpiresIn) * time.Second
+	if ttl <= 0 || ttl > time.Hour {
+		ttl = 5 * time.Minute
+	}
+	w.mu.Lock()
+	w.tokens[url] = cachedToken{value: out.AccessToken, expiresAt: time.Now().Add(ttl - 10*time.Second)}
+	w.mu.Unlock()
 	return out.AccessToken, nil
+}
+
+func (w *Worker) invalidateToken(url string) {
+	w.mu.Lock()
+	delete(w.tokens, url)
+	w.mu.Unlock()
+}
+
+func (w *Worker) createRequest(ctx context.Context, url, token, key string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", key)
+	return w.Client.Do(req)
 }
 func (w *Worker) retry(ctx context.Context, id, code string) error {
 	_, err := w.DB.Exec(ctx, `UPDATE integration.hukid_deliveries SET attempts=attempts+1,last_error_code=$2,next_attempt_at=now()+make_interval(secs=>LEAST(300,power(2,LEAST(attempts,8)))),lease_until=NULL,updated_at=now(),state=CASE WHEN attempts+1>=8 THEN 'failed' ELSE state END WHERE id=$1::uuid`, id, code)

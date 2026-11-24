@@ -9,7 +9,7 @@ init=(docker compose -f docker-compose.yml -f docker-compose.init.yml)
 
 usage() {
   cat <<'EOF'
-Uso: ./scripts/deploy-service.sh <core|onsite|operations|events|hukid>
+Uso: ./scripts/deploy-service.sh <core|onsite|participation|operations|events|hukid>
 
 Reconstruye únicamente el servicio seleccionado. Nunca ejecuta seeds ni baja
 contenedores ajenos. Las migraciones del dominio se aplican antes de recrear
@@ -40,6 +40,11 @@ case "$target" in
     wait_for_postgres
     "${init[@]}" run --rm --no-deps migrate-onsite
     "${dc[@]}" up -d --build --no-deps onsite-operations-api
+    ;;
+  participation)
+    wait_for_postgres
+    "${init[@]}" run --rm --no-deps migrate-participation
+    "${dc[@]}" up -d --build --no-deps participation-api
     ;;
   operations)
     wait_for_postgres

@@ -33,8 +33,14 @@ func New(db *pgxpool.Pool) *Server {
 func (s *Server) routes() {
 	a := s.App
 	a.Use(func(c fiber.Ctx) error {
-		c.Set("Access-Control-Allow-Origin", "*")
-		c.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key")
+		origin := c.Get("Origin")
+		for _, candidate := range strings.Split(os.Getenv("CORS_ALLOWED_ORIGINS"), ",") {
+			if strings.TrimSpace(candidate) == origin && origin != "" {
+				c.Set("Access-Control-Allow-Origin", origin)
+				c.Set("Vary", "Origin")
+			}
+		}
+		c.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Correlation-Id")
 		c.Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 		if c.Method() == "OPTIONS" {
 			return c.SendStatus(204)

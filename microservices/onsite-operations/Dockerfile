@@ -6,5 +6,6 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /out/onsite-api ./cmd/api
 FROM gcr.io/distroless/static-debian12
 COPY --from=build /out/onsite-api /onsite-api
+USER 65532:65532
 EXPOSE 8082
 ENTRYPOINT ["/onsite-api"]

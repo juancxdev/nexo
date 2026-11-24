@@ -8,3 +8,9 @@ polling.
 
 En desarrollo se ejecuta desde el compose raíz en `:8083`. La documentación
 HTTP está en `docs/openapi.yaml`.
+
+El servicio maneja dos tipos de entrega HukID: `participation_ticket` para el
+boleto del evento y `attendance_certificate` para el certificado. El payload se
+congela y cifra antes del worker; ambos usan `pre-authorized_code` sin `tx_code`.
+El nodo real se configura por `integration.hukid_configs`; el simulador solo se
+usa en desarrollo/test.

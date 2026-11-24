@@ -26,6 +26,8 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
   const [dashboard, setDashboard] = useState<Dashboard>({ registered: 0, confirmed: 0, present: 0, attendance_rate: 0 });
   const [facts, setFacts] = useState<AttendanceFact[]>([]);
   const [certificateId, setCertificateId] = useState('');
+  const [verificationSessionId, setVerificationSessionId] = useState('');
+  const [verificationLaunchUri, setVerificationLaunchUri] = useState('');
   const tab: Tab = context.route === '/onsite/attendance' ? 'attendance' : context.route === '/onsite/reports' ? 'reports' : 'checkin';
   const eventId = eventIds[event] || eventIds.demo;
   const operationsApiUrl = import.meta.env.VITE_OPERATIONS_API_URL || 'http://localhost:8083';
@@ -67,11 +69,33 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
   const checkin = async (ticketId: string) => {
     setLoading(true); setMessage('');
     try {
-      const response = await fetch(`${context.apiBaseUrl}/onsite/v1/attendance/check-ins`, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }), body: JSON.stringify({ ticket_id: ticketId, event_id: eventId, scope: 'main' }) });
+      const response = await fetch(`${context.apiBaseUrl}/onsite/v1/attendance/check-ins`, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }), body: JSON.stringify({ ticket_id: ticketId, event_id: eventId, scope: 'main', ...(verificationSessionId ? { verification_session_id: verificationSessionId } : {}) }) });
       const data = await response.json();
       if (!response.ok) { setMessage(t('onsite.checkinError', { error: data.code || 'error' })); return; }
       setMessage(t('onsite.checkinSuccess')); setTicket(null); setCode(''); await loadDashboard();
     } catch { setMessage(t('onsite.apiError')); } finally { setLoading(false); }
+  };
+  const startHukidVerification = async () => {
+    if (!ticket) { setMessage(t('onsite.selectTicketFirst')); return; }
+    try {
+      const response = await fetch(`${context.apiBaseUrl}/onsite/v1/verification-sessions`, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json', 'Idempotency-Key': crypto.randomUUID() }), body: JSON.stringify({ event_id: eventId, scope: 'main', ticket_id: ticket.ticket_id, ttl_seconds: 300 }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.code || 'verification_error');
+      setVerificationSessionId(data.sessionId || data.session_id); setVerificationLaunchUri(data.launchUri || data.launch_uri || '');
+      const launchUri = data.launchUri || data.launch_uri;
+      if (launchUri) window.open(launchUri, '_blank', 'noopener,noreferrer');
+      setMessage(t('onsite.verificationStarted'));
+    } catch { setMessage(t('onsite.apiError')); }
+  };
+  const pollHukidVerification = async () => {
+    if (!verificationSessionId) return;
+    try {
+      const response = await fetch(`${context.apiBaseUrl}/onsite/v1/verification-sessions/${verificationSessionId}`, { headers: authHeaders() });
+      const data = await response.json();
+      if (!response.ok) throw new Error();
+      if (data.check_in?.status === 'present') { setMessage(t('onsite.checkinSuccess')); setTicket(null); setVerificationSessionId(''); setVerificationLaunchUri(''); await loadDashboard(); }
+      else setMessage(data.session?.status === 'completed' ? t('onsite.verificationRejected') : t('onsite.verificationPending'));
+    } catch { setMessage(t('onsite.apiError')); }
   };
   const consumeQr = (rawValue: string) => {
     const compact = rawValue.trim();
@@ -118,7 +142,8 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
         <div className="nx-panel-heading"><div><p className="nx-eyebrow">{t('onsite.station')}</p><h2>{t('onsite.register')}</h2><p className="nx-muted">{t('onsite.registerDescription')}</p></div><Badge tone="success"><CheckCircle2 size={14} /> {t('onsite.ready')}</Badge></div>
         <div className="nx-scanner"><ScanLine size={42} /><strong>{t('onsite.scanner')}</strong><span>{t('onsite.scannerDescription')}</span></div>
         <div className="nx-ticket-entry"><Input label={t('onsite.ticketCode')} help={t('onsite.ticketCodeHelp')} value={code} onChange={(event) => setCode(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void search(); }} placeholder="DEMO-2026-001" /><div className="nx-actions"><Button onClick={() => setCameraOpen(true)}><ScanLine size={16} />{t('onsite.openCamera')}</Button><Button variant="secondary" onClick={() => consumeQr(code)} loading={searching}>{t('onsite.scan')}</Button><Button variant="secondary" onClick={() => void search()} loading={searching}>{t('onsite.search')}</Button></div></div>
-        {ticket && <div className="nx-ticket-result"><div><p className="nx-eyebrow">{t('onsite.searchSelect')}</p><strong>{ticket.masked_holder}</strong><span>{ticket.ticket_id} · {ticket.status === 'active' ? t('onsite.ticketReady') : t('onsite.ticketRejected')}</span></div><Button onClick={() => void checkin(ticket.ticket_id)} loading={loading}>{t('onsite.registerSelected')}</Button></div>}
+        {ticket && <div className="nx-ticket-result"><div><p className="nx-eyebrow">{t('onsite.searchSelect')}</p><strong>{ticket.masked_holder}</strong><span>{ticket.ticket_id} · {ticket.status === 'active' ? t('onsite.ticketReady') : t('onsite.ticketRejected')}</span></div><div className="nx-actions"><Button variant="secondary" onClick={() => void startHukidVerification()}>{t('onsite.verifyCredential')}</Button><Button onClick={() => void checkin(ticket.ticket_id)} loading={loading}>{t('onsite.registerSelected')}</Button></div></div>}
+        {verificationSessionId && <div className="nx-actions"><Button variant="secondary" onClick={() => void pollHukidVerification()}>{t('onsite.checkVerification')}</Button>{verificationLaunchUri && <span className="nx-muted">{t('onsite.verificationWaiting')}</span>}</div>}
         {message && <Alert tone={error ? 'danger' : 'success'}>{error ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />} {message}</Alert>}
       </Card>
       <Card className="nx-readiness"><div className="nx-panel-heading"><div><p className="nx-eyebrow">{t('onsite.attendanceTitle')}</p><h2>{t('onsite.attendanceSummary', { percentage: `${Math.round(dashboard.attendance_rate)}%` })}</h2></div></div><StatusLine label={t('onsite.registered')} value={String(dashboard.registered)} /><StatusLine label={t('onsite.confirmed')} value={String(dashboard.confirmed)} tone="success" /><StatusLine label={t('onsite.present')} value={String(dashboard.present)} tone="success" /></Card>

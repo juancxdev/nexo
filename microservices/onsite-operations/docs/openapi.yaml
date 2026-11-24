@@ -11,6 +11,32 @@ tags:
   - name: Health
   - name: Onsite
 paths:
+  /onsite/v1/verification-sessions:
+    post:
+      summary: Inicia una sesión OID4VP en HukID
+      security: [{bearerAuth: []}]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ttl_seconds: {type: integer, minimum: 60, maximum: 900}
+                event_id: {type: string}
+                scope: {type: string}
+                ticket_id: {type: string}
+      responses:
+        '201': {description: Sesión creada con launch_uri}
+        '503': {description: HukID no configurado o no disponible}
+  /onsite/v1/verification-sessions/{id}:
+    get:
+      summary: Consulta el resultado de una sesión OID4VP
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: string}}
+      responses:
+        '200': {description: Estado de la sesión}
+        '503': {description: HukID no disponible}
   /health/live:
     get:
       tags: [Health]

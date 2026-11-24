@@ -23,6 +23,12 @@ paths:
       operationId: issueCertificate
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CertificateCreate'}}}}
       responses: {'201': {description: Certificate evidence created; delivery is delegated to HukID}}
+  /operations/v1/participation-credentials:
+    post:
+      operationId: requestParticipationCredential
+      parameters: [{in: header, name: Idempotency-Key, required: true, schema: {type: string}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ParticipationCredentialCreate'}}}}
+      responses: {'202': {description: Participation credential accepted}, '409': {$ref: '#/components/responses/Problem'}}
   /operations/v1/certificates/{id}/hukid-deliveries:
     post:
       operationId: requestHukidDelivery
@@ -53,6 +59,7 @@ components:
   schemas:
     ReportJobCreate: {type: object, required: [event_id], properties: {event_id: {type: string}, scope: {type: string}, format: {type: string, enum: [csv, json]}}}
     CertificateCreate: {type: object, required: [event_id, registration_id, display_name], properties: {event_id: {type: string}, registration_id: {type: string}, display_name: {type: string}}}
+    ParticipationCredentialCreate: {type: object, required: [event_id, registration_id, ticket_id], properties: {event_id: {type: string}, registration_id: {type: string}, ticket_id: {type: string}}}
     HukidDeliveryCreate: {type: object, required: [consent], properties: {consent: {type: boolean, description: Explicit consent to include displayName in the verifiable credential claims}}}
     Problem: {type: object, required: [type, title, status, code], properties: {type: {type: string}, title: {type: string}, status: {type: integer}, code: {type: string}, detail: {type: string}}}
   responses: {Problem: {description: RFC 9457 problem, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}}

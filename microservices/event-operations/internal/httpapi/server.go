@@ -38,7 +38,7 @@ func (s *Server) routes() {
 			c.Set("Access-Control-Allow-Origin", origin)
 			c.Set("Vary", "Origin")
 		}
-		c.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Mock-Tenant, X-Mock-Actor")
+		c.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Correlation-Id")
 		c.Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 		if c.Method() == "OPTIONS" {
 			return c.SendStatus(204)
@@ -58,6 +58,7 @@ func (s *Server) routes() {
 	a.Get("/operations/v1/report-jobs/:id", s.private("reports:read"), s.getReport)
 	a.Post("/operations/v1/report-jobs/:id/cancellations", s.private("reports:read"), s.cancelReport)
 	a.Post("/operations/v1/certificate-jobs", s.private("certificates:issue"), s.issueCertificate)
+	a.Post("/operations/v1/participation-credentials", s.private("credentials:issue"), s.createParticipationDelivery)
 	a.Get("/operations/v1/certificates/:id", s.private("certificates:issue"), s.getCertificate)
 	a.Post("/operations/v1/certificates/:id/hukid-deliveries", s.private("certificates:issue"), s.createDelivery)
 	a.Get("/operations/v1/certificates/:id/hukid-deliveries", s.private("certificates:issue"), s.getDelivery)
@@ -115,7 +116,7 @@ func (s *Server) private(scope string) fiber.Handler {
 			c.Locals("actor_id", claims.Subject)
 			return c.Next()
 		}
-		if os.Getenv("APP_ENV") != "development" && os.Getenv("APP_ENV") != "test" {
+		if os.Getenv("APP_ENV") != "test" || !strings.EqualFold(os.Getenv("NEXO_TEST_MODE"), "true") {
 			return problem(c, 401, "unauthorized", "Authorization es obligatorio")
 		}
 		return c.Next()
@@ -331,7 +332,9 @@ func (s *Server) createDelivery(c fiber.Ctx) error {
 		"event":       map[string]any{"id": eventID},
 		"achievement": map[string]any{"attendanceRate": 1.0},
 	}
-	payload := map[string]any{"issuerId": issuer, "credentialDefinition": definition, "claims": claims, "delivery": map[string]any{"flow": "pre-authorized_code", "expiresInSeconds": 300, "txCodeRequired": true}, "source": map[string]any{"system": "nexo", "reference": cert, "evidenceDigest": evidence}}
+	// HukID Grupo 5 v0 soporta únicamente el flujo pre-authorized_code sin
+	// tx_code. La wallet obtiene el código opaco desde la credential offer.
+	payload := map[string]any{"issuerId": issuer, "credentialDefinition": definition, "claims": claims, "delivery": map[string]any{"flow": "pre-authorized_code", "expiresInSeconds": 300, "txCodeRequired": false}, "source": map[string]any{"system": "nexo", "reference": cert, "evidenceDigest": evidence}}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return problem(c, 500, "claims_serialization_failed", "no se pudo preparar la solicitud HukID")
@@ -367,6 +370,65 @@ func (s *Server) createDelivery(c fiber.Ctx) error {
 		return problem(c, 503, "persistence_unavailable", err.Error())
 	}
 	return c.Status(202).JSON(fiber.Map{"id": id, "certificate_id": cert, "state": "pending", "source_reference": cert})
+}
+
+// createParticipationDelivery starts issuance of the event ticket credential.
+// The registration service remains the source of eligibility; this endpoint
+// only accepts opaque internal references and never accepts arbitrary claims.
+func (s *Server) createParticipationDelivery(c fiber.Ctx) error {
+	var in struct {
+		EventID        string `json:"event_id"`
+		RegistrationID string `json:"registration_id"`
+		TicketID       string `json:"ticket_id"`
+	}
+	if json.Unmarshal(c.Body(), &in) != nil || in.EventID == "" || in.RegistrationID == "" || in.TicketID == "" {
+		return problem(c, 400, "invalid_body", "event_id, registration_id y ticket_id son obligatorios")
+	}
+	key := c.Get("Idempotency-Key")
+	if key == "" {
+		return problem(c, 400, "idempotency_key_required", "Idempotency-Key es obligatorio")
+	}
+	var config uuid.UUID
+	var issuer, definition string
+	err := s.DB.QueryRow(c.Context(), `SELECT id,issuer_id,COALESCE(NULLIF(participation_credential_definition,''),credential_definition) FROM integration.hukid_configs WHERE tenant_id=$1::uuid AND status='active' LIMIT 1`, tenant(c)).Scan(&config, &issuer, &definition)
+	if err != nil {
+		return problem(c, 409, "hukid_not_configured", "no existe una definición HukID para boletos")
+	}
+	claims := map[string]any{
+		"ticket": map[string]any{"id": in.TicketID, "eventId": in.EventID, "registrationId": in.RegistrationID},
+	}
+	payload := map[string]any{
+		"issuerId": issuer, "credentialDefinition": definition, "claims": claims,
+		"delivery": map[string]any{"flow": "pre-authorized_code", "expiresInSeconds": 300, "txCodeRequired": false},
+		"source":   map[string]any{"system": "nexo", "reference": in.TicketID},
+	}
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return problem(c, 500, "claims_serialization_failed", "no se pudo preparar el boleto HukID")
+	}
+	digest := sha256.Sum256(raw)
+	ciphertext, nonce, keyVersion, err := secureclaims.Encrypt(raw)
+	if err != nil {
+		return problem(c, 503, "claims_protection_unavailable", "no se pudo proteger el boleto HukID")
+	}
+	id := uuid.New()
+	digestText := base64.RawURLEncoding.EncodeToString(digest[:])
+	var existingID, existingState, existingHash, existingKey string
+	if err := s.DB.QueryRow(c.Context(), `SELECT id::text,state,COALESCE(claims_hash,''),idempotency_key FROM integration.hukid_deliveries WHERE tenant_id=$1::uuid AND credential_type='participation_ticket' AND (subject_reference=$2 OR idempotency_key=$3) LIMIT 1`, tenant(c), in.TicketID, key).Scan(&existingID, &existingState, &existingHash, &existingKey); err == nil {
+		if existingHash != digestText || existingKey != key {
+			return problem(c, 409, "idempotency_key_reused", "la clave o el ticket fueron reutilizados con otro payload")
+		}
+		return c.Status(200).JSON(fiber.Map{"id": existingID, "credential_type": "participation_ticket", "ticket_id": in.TicketID, "state": existingState, "replayed": true})
+	}
+	_, err = s.DB.Exec(c.Context(), `INSERT INTO integration.hukid_deliveries(id,tenant_id,certificate_id,config_id,idempotency_key,source_reference,state,claims_ciphertext,claims_nonce,claims_key_version,claims_hash,credential_type,subject_reference,event_id,registration_id) VALUES($1,$2::uuid,NULL,$3,$4,$5,'pending',$6,$7,$8,$9,'participation_ticket',$5,$10,$11) ON CONFLICT DO NOTHING`, id, tenant(c), config, key, in.TicketID, ciphertext, nonce, keyVersion, base64.RawURLEncoding.EncodeToString(digest[:]), in.EventID, in.RegistrationID)
+	if err != nil {
+		return problem(c, 503, "persistence_unavailable", "no se pudo guardar la entrega HukID")
+	}
+	var resultID, state string
+	if err = s.DB.QueryRow(c.Context(), `SELECT id::text,state FROM integration.hukid_deliveries WHERE tenant_id=$1::uuid AND credential_type='participation_ticket' AND subject_reference=$2`, tenant(c), in.TicketID).Scan(&resultID, &state); err != nil {
+		return problem(c, 503, "persistence_unavailable", "no se pudo leer la entrega HukID")
+	}
+	return c.Status(202).JSON(fiber.Map{"id": resultID, "credential_type": "participation_ticket", "ticket_id": in.TicketID, "state": state, "replayed": resultID != id.String()})
 }
 func (s *Server) getDelivery(c fiber.Ctx) error {
 	var id, cert, state string
