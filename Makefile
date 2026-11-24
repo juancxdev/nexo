@@ -1,4 +1,4 @@
-.PHONY: stack-init deploy-core deploy-onsite deploy-operations deploy-events deploy-hukid events-up events-rebuild events-logs events-down
+.PHONY: stack-init deploy-core deploy-onsite deploy-participation deploy-operations deploy-events deploy-hukid events-up events-rebuild events-logs events-down
 
 stack-init:
 	./scripts/dev-up.sh
@@ -8,6 +8,9 @@ deploy-core:
 
 deploy-onsite:
 	./scripts/deploy-service.sh onsite
+
+deploy-participation:
+	./scripts/deploy-service.sh participation
 
 deploy-operations:
 	./scripts/deploy-service.sh operations

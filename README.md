@@ -50,6 +50,7 @@ El arranque completo es excepcional: se usa para una máquina nueva o una base r
 ```bash
 make deploy-core        # Core API
 make deploy-onsite      # Onsite Operations API
+make deploy-participation # Participation API
 make deploy-operations  # Event Operations API
 make deploy-events      # Event Configuration API + Worker
 make deploy-hukid       # Simulador HukID
@@ -99,6 +100,8 @@ make events-logs
 ```
 
 Consulta [`backend/README.md`](backend/README.md) y [`backend/docs/openapi.yaml`](backend/docs/openapi.yaml) para los contratos disponibles.
+
+Los aportes del Equipo 4 sobre `develop` (QR firmado, sesiones, reportes reales, certificados con elegibilidad y sus pantallas) están descritos en [`docs/engineering/EQUIPO4-APORTES-SOBRE-DEVELOP.md`](docs/engineering/EQUIPO4-APORTES-SOBRE-DEVELOP.md).
 
 La revisión de compatibilidad e integración del repositorio del Grupo 3 está documentada en [`docs/engineering/GROUP3-INTEGRATION-AUDIT.md`](docs/engineering/GROUP3-INTEGRATION-AUDIT.md). El código externo no se copia directamente: debe adaptarse al schema único `nexo`, al JWT de Core, al shell de microfrontends y al contrato QR de Onsite.
 
