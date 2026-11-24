@@ -63,6 +63,9 @@ func (s *Server) routes() {
 	a.Post("/operations/v1/report-jobs/:id/retries", s.private("reports:read"), s.retryReport)
 	a.Post("/operations/v1/report-jobs/:id/purges", s.private("reports:read"), s.purgeReport)
 	a.Post("/operations/v1/certificate-jobs", s.private("certificates:issue"), s.issueCertificate)
+	a.Post("/operations/v1/participation-credentials", s.private("credentials:issue"), s.createParticipationDelivery)
+	a.Post("/internal/v1/participation-credentials", s.internal, s.createParticipationDelivery)
+	a.Get("/internal/v1/participation-credentials/:registration_id", s.internal, s.getParticipationDelivery)
 	a.Get("/operations/v1/certificates/:id", s.private("certificates:issue"), s.getCertificate)
 	a.Post("/operations/v1/certificates/:id/hukid-deliveries", s.private("certificates:issue"), s.createDelivery)
 	a.Get("/operations/v1/certificates/:id/hukid-deliveries", s.private("certificates:issue"), s.getDelivery)
@@ -70,6 +73,17 @@ func (s *Server) routes() {
 	a.Post("/operations/v1/hukid-deliveries/:id/retries", s.private("certificates:issue"), s.retryDelivery)
 	a.Get("/public/v1/certificates/:code", s.verifyCertificate)
 	s.certificateRoutes()
+}
+
+func (s *Server) internal(c fiber.Ctx) error {
+	if token := strings.TrimSpace(os.Getenv("NEXO_INTERNAL_SERVICE_TOKEN")); token == "" || c.Get("X-Internal-Service-Token") != token {
+		return problem(c, 401, "unauthorized", "token interno inválido")
+	}
+	if _, err := uuid.Parse(c.Get("X-Tenant-Id")); err != nil {
+		return problem(c, 400, "invalid_tenant", "X-Tenant-Id inválido")
+	}
+	c.Locals("tenant_id", c.Get("X-Tenant-Id"))
+	return c.Next()
 }
 
 func allowedOrigin(origin string) string {
@@ -383,6 +397,57 @@ func (s *Server) createDelivery(c fiber.Ctx) error {
 	}
 	return c.Status(202).JSON(fiber.Map{"id": id, "certificate_id": cert, "state": "pending", "source_reference": cert})
 }
+func (s *Server) createParticipationDelivery(c fiber.Ctx) error {
+	var in struct {
+		EventID        string `json:"event_id"`
+		RegistrationID string `json:"registration_id"`
+		TicketID       string `json:"ticket_id"`
+	}
+	if json.Unmarshal(c.Body(), &in) != nil || in.EventID == "" || in.RegistrationID == "" || in.TicketID == "" {
+		return problem(c, 400, "invalid_body", "event_id, registration_id y ticket_id son obligatorios")
+	}
+	key := c.Get("Idempotency-Key")
+	if key == "" {
+		return problem(c, 400, "idempotency_key_required", "Idempotency-Key es obligatorio")
+	}
+	var config uuid.UUID
+	var issuer, definition string
+	if err := s.DB.QueryRow(c.Context(), `SELECT id,issuer_id,COALESCE(NULLIF(participation_credential_definition,''),credential_definition) FROM integration.hukid_configs WHERE tenant_id=$1::uuid AND status='active' LIMIT 1`, tenant(c)).Scan(&config, &issuer, &definition); err != nil {
+		return problem(c, 409, "hukid_not_configured", "no existe una definición HukID para boletos")
+	}
+	claims := map[string]any{"ticket": map[string]any{"id": in.TicketID, "eventId": in.EventID, "registrationId": in.RegistrationID}}
+	payload := map[string]any{"issuerId": issuer, "credentialDefinition": definition, "claims": claims, "delivery": map[string]any{"flow": "pre-authorized_code", "expiresInSeconds": 300, "txCodeRequired": false}, "source": map[string]any{"system": "nexo", "reference": in.TicketID}}
+	raw, _ := json.Marshal(payload)
+	digest := sha256.Sum256(raw)
+	ciphertext, nonce, keyVersion, err := secureclaims.Encrypt(raw)
+	if err != nil {
+		return problem(c, 503, "claims_protection_unavailable", "no se pudo proteger el boleto HukID")
+	}
+	digestText := base64.RawURLEncoding.EncodeToString(digest[:])
+	var existingID, existingState, existingHash, existingKey string
+	if err := s.DB.QueryRow(c.Context(), `SELECT id::text,state,COALESCE(claims_hash,''),idempotency_key FROM integration.hukid_deliveries WHERE tenant_id=$1::uuid AND credential_type='participation_ticket' AND (subject_reference=$2 OR idempotency_key=$3) LIMIT 1`, tenant(c), in.TicketID, key).Scan(&existingID, &existingState, &existingHash, &existingKey); err == nil {
+		if existingHash != digestText || existingKey != key {
+			return problem(c, 409, "idempotency_key_reused", "la clave o el ticket fueron reutilizados con otro payload")
+		}
+		return c.Status(200).JSON(fiber.Map{"id": existingID, "credential_type": "participation_ticket", "ticket_id": in.TicketID, "state": existingState, "replayed": true})
+	}
+	id := uuid.New()
+	_, err = s.DB.Exec(c.Context(), `INSERT INTO integration.hukid_deliveries(id,tenant_id,certificate_id,config_id,idempotency_key,source_reference,state,claims_ciphertext,claims_nonce,claims_key_version,claims_hash,credential_type,subject_reference,event_id,registration_id) VALUES($1,$2::uuid,NULL,$3,$4,$5,'pending',$6,$7,$8,$9,'participation_ticket',$5,$10,$11)`, id, tenant(c), config, key, in.TicketID, ciphertext, nonce, keyVersion, digestText, in.EventID, in.RegistrationID)
+	if err != nil {
+		return problem(c, 503, "persistence_unavailable", "no se pudo guardar la entrega HukID")
+	}
+	return c.Status(202).JSON(fiber.Map{"id": id, "credential_type": "participation_ticket", "ticket_id": in.TicketID, "state": "pending"})
+}
+
+func (s *Server) getParticipationDelivery(c fiber.Ctx) error {
+	var id, state, offer, credential string
+	err := s.DB.QueryRow(c.Context(), `SELECT id::text,state,COALESCE(credential_offer_uri,''),COALESCE(credential_id,'') FROM integration.hukid_deliveries WHERE tenant_id=$1::uuid AND credential_type='participation_ticket' AND registration_id=$2 LIMIT 1`, tenant(c), c.Params("registration_id")).Scan(&id, &state, &offer, &credential)
+	if err != nil {
+		return problem(c, 404, "credential_delivery_not_found", "entrega HukID no encontrada")
+	}
+	return c.JSON(fiber.Map{"id": id, "credential_type": "participation_ticket", "state": state, "credential_offer_uri": offer, "credential_id": credential})
+}
+
 func (s *Server) getDelivery(c fiber.Ctx) error {
 	var id, cert, state string
 	err := s.DB.QueryRow(c.Context(), `SELECT id::text,certificate_id::text,state FROM integration.hukid_deliveries WHERE certificate_id=$1 AND tenant_id=$2::uuid`, c.Params("id"), tenant(c)).Scan(&id, &cert, &state)

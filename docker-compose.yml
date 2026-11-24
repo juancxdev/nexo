@@ -48,6 +48,8 @@ services:
       DATABASE_URL: postgres://participation_app:participation-app-local-only@postgres:5432/nexo?sslmode=disable
       PARTICIPATION_ADDR: :8084
       CORS_ALLOWED_ORIGINS: http://localhost:5174,http://127.0.0.1:5174
+      EVENT_OPERATIONS_URL: http://event-operations-api:8083
+      NEXO_INTERNAL_SERVICE_TOKEN: nexo-local-service-only
     ports: ["8084:8084"]
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8084/health/ready"]
@@ -67,6 +69,7 @@ services:
       CORS_ALLOWED_ORIGINS: http://localhost:5174,http://127.0.0.1:5174
       # Development-only AES-256 key. Production injects it through a secret manager.
       HUKID_CLAIMS_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      NEXO_INTERNAL_SERVICE_TOKEN: nexo-local-service-only
       NEXO_PUBLIC_BASE_URL: http://localhost:8083
     ports: ["8083:8083"]
   event-configuration-api:
