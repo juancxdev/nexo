@@ -278,6 +278,7 @@ func (r *Router) routes() {
 	a.Post("/onsite/v1/attendance/facts/:id/voids", r.auth("onsite:void"), r.voidFact)
 	a.Get("/onsite/v1/attendance", r.auth("onsite:read"), r.list)
 	a.Get("/onsite/v1/dashboard", r.auth("onsite:read"), r.dashboard)
+	r.registerScanRoutes(a)
 }
 
 func allowedOrigin(origin string) string {

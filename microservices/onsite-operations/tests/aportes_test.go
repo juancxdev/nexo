@@ -66,6 +66,9 @@ func TestAportesOnsite(t *testing.T) {
 		t.Fatalf("check-out = %d presente=%v", st, present())
 	}
 	checkOutID, _ := out["ID"].(string)
+	if checkOutID == "" {
+		checkOutID, _ = out["id"].(string)
+	}
 	voidURL := "/onsite/v1/attendance/facts/" + checkOutID + "/voids"
 	sup := map[string]string{"X-Mock-Role": "supervisor"}
 
