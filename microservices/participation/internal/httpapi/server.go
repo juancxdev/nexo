@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ed25519"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -51,6 +52,7 @@ func (s *Server) routes() {
 		return c.JSON(fiber.Map{"status": "ok"})
 	})
 	a.Get("/participation/public/v1/sites/:site/events/:event/form", s.form)
+	a.Get("/participation/public/v1/ticket-keys", s.ticketKeys)
 	a.Post("/participation/public/v1/sites/:site/events/:event/registrations", s.register)
 	a.Get("/participation/self/v1/registrations/:id/ticket", s.ticket)
 }
@@ -255,11 +257,38 @@ func getenv(k, fallback string) string {
 	}
 	return fallback
 }
+
+// ticketSigningKey devuelve la clave Ed25519 con que se firman los QR. En producción
+// PARTICIPATION_TICKET_SIGNING_SEED trae 32 bytes en base64; en local se deriva una clave
+// de desarrollo conocida, cuya pública está sembrada en Onsite (seeds/demo-day-qr.sql).
+func ticketSigningKey() (string, ed25519.PrivateKey) {
+	kid := getenv("PARTICIPATION_TICKET_KID", "participation-dev-1")
+	if raw := strings.TrimSpace(os.Getenv("PARTICIPATION_TICKET_SIGNING_SEED")); raw != "" {
+		if seed, err := base64.StdEncoding.DecodeString(raw); err == nil && len(seed) == ed25519.SeedSize {
+			return kid, ed25519.NewKeyFromSeed(seed)
+		}
+	}
+	seed := sha256.Sum256([]byte("nexo-development-participation-ticket-key"))
+	return kid, ed25519.NewKeyFromSeed(seed[:])
+}
+
+// makeTicket emite el QR como JWS compacto firmado con EdDSA. Onsite lo verifica sin
+// conexión con la clave pública. "scope" es la zona de acceso (main) y el slug del evento
+// va aparte en "event_slug". El QR no lleva datos personales.
 func makeTicket(id, event, site, slug string) string {
 	enc := base64.RawURLEncoding.EncodeToString
-	header, _ := json.Marshal(map[string]string{"alg": "HS256", "kid": "participation-dev-1", "typ": "JWT"})
-	payload, _ := json.Marshal(map[string]any{"jti": id, "aud": "onsite", "organization_id": site, "event_id": event, "scope": slug, "exp": time.Now().Add(24 * time.Hour).Unix(), "release_version": "dev-1", "kid": "participation-dev-1"})
-	return enc(header) + "." + enc(payload) + ".development-signature"
+	kid, key := ticketSigningKey()
+	header, _ := json.Marshal(map[string]string{"alg": "EdDSA", "kid": kid, "typ": "JWT"})
+	payload, _ := json.Marshal(map[string]any{"jti": id, "aud": "onsite", "organization_id": site, "event_id": event, "event_slug": slug, "scope": "main", "exp": time.Now().Add(24 * time.Hour).Unix(), "release_version": "dev-1", "kid": kid})
+	input := enc(header) + "." + enc(payload)
+	return input + "." + enc(ed25519.Sign(key, []byte(input)))
+}
+
+// ticketKeys publica las claves públicas de los QR (formato JWKS, OKP/Ed25519).
+func (s *Server) ticketKeys(c fiber.Ctx) error {
+	kid, key := ticketSigningKey()
+	pub := key.Public().(ed25519.PublicKey)
+	return c.JSON(fiber.Map{"keys": []fiber.Map{{"kty": "OKP", "crv": "Ed25519", "alg": "EdDSA", "use": "sig", "kid": kid, "x": base64.RawURLEncoding.EncodeToString(pub)}}})
 }
 func problem(c fiber.Ctx, status int, code, detail string) error {
 	return c.Status(status).Type("application/problem+json").JSON(fiber.Map{"type": "https://errors.example.pe/" + code, "title": code, "status": status, "code": code, "detail": detail})

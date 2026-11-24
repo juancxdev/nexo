@@ -23,6 +23,9 @@ test('procesa un QR y muestra el duplicado proveniente del API',async({page})=>{
   await page.getByLabel('Código QR o ticket').fill('nexo:ticket:DEMO-2026-003');
   await page.getByRole('button',{name:'Simular escaneo'}).click();
   await expect(page.getByText('C*** Demo')).toBeVisible();
+  const checkInResponse = page.waitForResponse(response => response.url().includes('/onsite/v1/attendance/check-ins') && response.request().method() === 'POST');
   await page.getByRole('button',{name:'Registrar entrada'}).click();
-  await expect(page.getByText(/already_present/)).toBeVisible();
+  const response = await checkInResponse;
+  expect(response.status()).toBe(409);
+  await expect(response.json()).resolves.toMatchObject({code:'already_present'});
 });

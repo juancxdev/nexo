@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"nexo-event-operations/internal/reports"
 	"nexo-event-operations/internal/secureclaims"
 )
 
@@ -38,7 +39,7 @@ func (s *Server) routes() {
 			c.Set("Access-Control-Allow-Origin", origin)
 			c.Set("Vary", "Origin")
 		}
-		c.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Mock-Tenant, X-Mock-Actor")
+		c.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Mock-Tenant, X-Mock-Actor, X-Mock-Role")
 		c.Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 		if c.Method() == "OPTIONS" {
 			return c.SendStatus(204)
@@ -57,6 +58,10 @@ func (s *Server) routes() {
 	a.Post("/operations/v1/report-jobs", s.private("reports:read"), s.createReport)
 	a.Get("/operations/v1/report-jobs/:id", s.private("reports:read"), s.getReport)
 	a.Post("/operations/v1/report-jobs/:id/cancellations", s.private("reports:read"), s.cancelReport)
+	a.Get("/operations/v1/report-jobs", s.private("reports:read"), s.listReports)
+	a.Get("/operations/v1/report-jobs/:id/artifact", s.private("reports:read"), s.downloadReport)
+	a.Post("/operations/v1/report-jobs/:id/retries", s.private("reports:read"), s.retryReport)
+	a.Post("/operations/v1/report-jobs/:id/purges", s.private("reports:read"), s.purgeReport)
 	a.Post("/operations/v1/certificate-jobs", s.private("certificates:issue"), s.issueCertificate)
 	a.Get("/operations/v1/certificates/:id", s.private("certificates:issue"), s.getCertificate)
 	a.Post("/operations/v1/certificates/:id/hukid-deliveries", s.private("certificates:issue"), s.createDelivery)
@@ -64,6 +69,7 @@ func (s *Server) routes() {
 	a.Post("/operations/v1/hukid-deliveries/:id/cancellations", s.private("certificates:issue"), s.cancelDelivery)
 	a.Post("/operations/v1/hukid-deliveries/:id/retries", s.private("certificates:issue"), s.retryDelivery)
 	a.Get("/public/v1/certificates/:code", s.verifyCertificate)
+	s.certificateRoutes()
 }
 
 func allowedOrigin(origin string) string {
@@ -224,9 +230,16 @@ func (s *Server) createReport(c fiber.Ctx) error {
 		EventID string `json:"event_id"`
 		Scope   string `json:"scope"`
 		Format  string `json:"format"`
+		Type    string `json:"report_type"`
 	}
 	if json.Unmarshal(c.Body(), &b) != nil || b.EventID == "" {
 		return problem(c, 400, "invalid_body", "event_id es obligatorio")
+	}
+	if b.Type == "" {
+		b.Type = "attendance"
+	}
+	if !reports.Types[b.Type] {
+		return problem(c, 400, "invalid_report_type", "report_type debe ser attendance, presence, rejections o summary")
 	}
 	if b.Format == "" {
 		b.Format = "csv"
@@ -235,22 +248,22 @@ func (s *Server) createReport(c fiber.Ctx) error {
 		return problem(c, 400, "invalid_format", "format debe ser csv o json")
 	}
 	id := uuid.New()
-	_, err := s.DB.Exec(c.Context(), `INSERT INTO operations.report_jobs(id,tenant_id,requested_by,event_id,scope,format,status) VALUES($1,$2::uuid,$3::uuid,$4,$5,$6,'pending')`, id, tenant(c), actor(c), b.EventID, b.Scope, b.Format)
+	_, err := s.DB.Exec(c.Context(), `INSERT INTO operations.report_jobs(id,tenant_id,requested_by,event_id,scope,format,status,report_type) VALUES($1,$2::uuid,$3::uuid,$4,$5,$6,'pending',$7)`, id, tenant(c), actor(c), b.EventID, b.Scope, b.Format, b.Type)
 	if err != nil {
 		return problem(c, 503, "persistence_unavailable", err.Error())
 	}
-	return c.Status(202).JSON(fiber.Map{"id": id, "status": "pending", "progress": 0})
+	return c.Status(202).JSON(fiber.Map{"id": id, "status": "pending", "progress": 0, "report_type": b.Type, "format": b.Format})
 }
 func (s *Server) getReport(c fiber.Ctx) error {
-	var id string
-	var status string
-	var progress int
-	var errCode *string
-	err := s.DB.QueryRow(c.Context(), `SELECT id::text,status,progress,error_code FROM operations.report_jobs WHERE id=$1 AND tenant_id=$2::uuid`, c.Params("id"), tenant(c)).Scan(&id, &status, &progress, &errCode)
+	rows, err := s.DB.Query(c.Context(), reportSelect+` WHERE id=$1::uuid AND tenant_id=$2::uuid`, c.Params("id"), tenant(c))
 	if err != nil {
 		return problem(c, 404, "report_not_found", "reporte no encontrado")
 	}
-	return c.JSON(fiber.Map{"id": id, "status": status, "progress": progress, "error_code": errCode})
+	items, err := scanReports(rows)
+	if err != nil || len(items) == 0 {
+		return problem(c, 404, "report_not_found", "reporte no encontrado")
+	}
+	return c.JSON(items[0])
 }
 func (s *Server) cancelReport(c fiber.Ctx) error {
 	_, err := s.DB.Exec(c.Context(), `UPDATE operations.report_jobs SET status='cancelled',updated_at=now() WHERE id=$1 AND tenant_id=$2::uuid AND status IN ('pending','running')`, c.Params("id"), tenant(c))
@@ -259,24 +272,23 @@ func (s *Server) cancelReport(c fiber.Ctx) error {
 	}
 	return c.SendStatus(204)
 }
+
+// issueCertificate decide la elegibilidad con datos reales (regla attendance@1.0.0):
+// el registro debe estar confirmado en Participation y su ticket debe tener una entrada
+// vigente (no anulada) en Onsite. El nombre sale de Participation, no del cliente.
 func (s *Server) issueCertificate(c fiber.Ctx) error {
 	var b struct {
 		EventID        string `json:"event_id"`
 		RegistrationID string `json:"registration_id"`
-		DisplayName    string `json:"display_name"`
 	}
-	if json.Unmarshal(c.Body(), &b) != nil || b.EventID == "" || b.RegistrationID == "" || b.DisplayName == "" {
-		return problem(c, 400, "invalid_body", "event_id, registration_id y display_name son obligatorios")
+	if json.Unmarshal(c.Body(), &b) != nil || b.EventID == "" || b.RegistrationID == "" {
+		return problem(c, 400, "invalid_body", "event_id y registration_id son obligatorios")
 	}
-	id := uuid.New()
-	code := "NX-" + id.String()[:8]
-	sum := sha256.Sum256([]byte("nexo:certificate-evidence:v1|" + tenant(c) + "|" + b.EventID + "|" + b.RegistrationID + "|" + code))
-	evidence := base64.RawURLEncoding.EncodeToString(sum[:])
-	_, err := s.DB.Exec(c.Context(), `INSERT INTO certificates.certificates(id,tenant_id,event_id,registration_id,verification_code,display_name,state,evidence_digest) VALUES($1,$2::uuid,$3,$4,$5,$6,'eligible',$7)`, id, tenant(c), b.EventID, b.RegistrationID, code, b.DisplayName, evidence)
-	if err != nil {
-		return problem(c, 503, "persistence_unavailable", err.Error())
+	out, status, code, detail := s.createEligibleCertificate(c.Context(), tenant(c), b.EventID, b.RegistrationID, nil)
+	if status != 201 {
+		return problem(c, status, code, detail)
 	}
-	return c.Status(201).JSON(fiber.Map{"id": id, "verification_code": code, "state": "eligible", "evidence_digest": evidence, "next_action": "request_hukid_delivery"})
+	return c.Status(201).JSON(out)
 }
 func (s *Server) getCertificate(c fiber.Ctx) error {
 	var id, code, state, evidence string
@@ -287,6 +299,9 @@ func (s *Server) getCertificate(c fiber.Ctx) error {
 	return c.JSON(fiber.Map{"id": id, "verification_code": code, "state": state, "evidence_digest": evidence})
 }
 func (s *Server) verifyCertificate(c fiber.Ctx) error {
+	if strings.Contains(c.Get("Accept"), "text/html") || c.Query("format") == "html" {
+		return s.verifyCertificateHTML(c)
+	}
 	var id, code, state, evidence string
 	err := s.DB.QueryRow(c.Context(), `SELECT id::text,verification_code,state,evidence_digest FROM certificates.certificates WHERE verification_code=$1`, c.Params("code")).Scan(&id, &code, &state, &evidence)
 	if err != nil {

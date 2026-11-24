@@ -95,6 +95,47 @@ paths:
       parameters: [{$ref: '#/components/parameters/EventId'}]
       responses:
         '200': {description: Métricas operativas, content: {application/json: {schema: {$ref: '#/components/schemas/Dashboard'}}}}
+  /onsite/v1/scans:
+    post:
+      tags: [QR]
+      summary: Verifica un QR firmado por Participation (OO-010/016). Un rechazo responde 200 con accepted=false y queda registrado.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ScanRequest'}}}}
+      responses:
+        '200': {description: Resultado de la verificación, content: {application/json: {schema: {$ref: '#/components/schemas/ScanResult'}}}}
+        '403': {description: Sin asignación vigente}
+  /onsite/v1/scans/provisional:
+    post:
+      tags: [QR]
+      summary: Supervisión acepta un ticket recién emitido aún sin proyección (OO-017). Exige revocaciones frescas; queda auditado.
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ScanRequest'}}}}
+      responses:
+        '201': {description: Ticket provisional creado}
+        '403': {description: Requiere rol supervisor o manager}
+        '409': {description: 'revocations_stale | not_provisional_candidate'}
+        '422': {description: QR inválido para este punto de control}
+  /onsite/v1/scan-stats:
+    get:
+      tags: [QR]
+      summary: Rechazos de las últimas 24 h agrupados por motivo, sin datos personales.
+      parameters: [{$ref: '#/components/parameters/EventId'}]
+      responses: {'200': {description: Conteo por motivo}}
+  /onsite/v1/sessions:
+    get:
+      tags: [Sesiones]
+      summary: Sesiones del evento con acceso, aforo y ocupación (OO-015).
+      parameters: [{$ref: '#/components/parameters/EventId'}]
+      responses: {'200': {description: Sesiones}}
+  /onsite/v1/sessions/{code}/entries:
+    post:
+      tags: [Sesiones]
+      summary: Registra el ingreso a una sesión con ticket_id o QR. No modifica la asistencia principal.
+      parameters: [{name: code, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object, required: [event_id], properties: {event_id: {type: string}, ticket_id: {type: string}, token: {type: string}}}}}}
+      responses:
+        '201': {description: Entrada registrada}
+        '409': {description: 'already_in_session | session_full'}
+        '422': {description: 'session_not_allowed | session_closed | ticket_*'}
 components:
   securitySchemes:
     bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
@@ -112,7 +153,9 @@ components:
     AttendancePage: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/AttendanceFact'}}, next_cursor: {type: string, nullable: true}}}
     Dashboard: {type: object, required: [registered, confirmed, present, attendance_rate], properties: {registered: {type: integer}, confirmed: {type: integer}, present: {type: integer}, attendance_rate: {type: number, format: double}}}
     Readiness: {type: object, required: [ready, event_id, scope, device_id], properties: {ready: {type: boolean}, event_id: {type: string}, scope: {type: string}, device_id: {type: string}}}
-    VoidRequest: {type: object, required: [reason], properties: {reason: {type: string, minLength: 1, maxLength: 500}}}
+    VoidRequest: {type: object, required: [reason], properties: {reason: {type: string, minLength: 5, maxLength: 500, description: 'Menos de 5 caracteres responde 422 reason_required. Un registro sólo se anula una vez (409 already_voided); anular una salida devuelve la presencia.'}}}
+    ScanRequest: {type: object, required: [token, event_id, scope], properties: {token: {type: string, description: 'JWS compacto EdDSA (Ed25519) emitido por Participation'}, event_id: {type: string, example: event-demo}, scope: {type: string, example: main}}}
+    ScanResult: {type: object, required: [accepted, can_resolve, provisional], properties: {accepted: {type: boolean}, reason: {type: string, enum: [qr_malformed, qr_unsupported_alg, qr_unknown_key, qr_bad_signature, qr_wrong_audience, wrong_event, wrong_scope, ticket_expired, ticket_revoked, ticket_invalid, ticket_not_materialized]}, can_resolve: {type: boolean}, provisional: {type: boolean}, ticket: {type: object, properties: {ticket_id: {type: string}, masked_holder: {type: string}, expires_at: {type: string, format: date-time}}}}}
     DeviceCreate: {type: object, required: [label], properties: {label: {type: string}, venue_id: {type: string}, public_key: {type: string}, release_version: {type: string}}}
     Device: {type: object, required: [id, tenant_id, label, status], properties: {id: {type: string, format: uuid}, tenant_id: {type: string, format: uuid}, label: {type: string}, status: {type: string, enum: [active, revoked]}, venue_id: {type: string}, release_version: {type: string}, last_seen_at: {type: string, format: date-time, nullable: true}}}
     Problem: {type: object, required: [type, title, status, code, detail, trace_id], properties: {type: {type: string}, title: {type: string}, status: {type: integer}, code: {type: string}, detail: {type: string}, trace_id: {type: string}}}

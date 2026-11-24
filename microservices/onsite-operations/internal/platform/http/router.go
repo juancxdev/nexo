@@ -33,7 +33,7 @@ type Router struct {
 }
 
 func NewRouter(db *postgres.Store) *Router {
-	r := &Router{App: fiber.New(fiber.Config{AppName: "Nexo Onsite Operations", BodyLimit: 1 << 20}), DB: db, Service: application.Service{Tickets: db, Attendance: db, Devices: db}}
+	r := &Router{App: fiber.New(fiber.Config{AppName: "Nexo Onsite Operations", BodyLimit: 1 << 20, ErrorHandler: errorHandler}), DB: db, Service: application.Service{Tickets: db, Attendance: db, Devices: db}}
 	r.routes()
 	return r
 }
@@ -52,9 +52,25 @@ func traceID(c fiber.Ctx) string {
 	}
 	return c.Get("X-Request-Id")
 }
+
+// errResponded indica que la respuesta de error ya se escribió. problem() lo devuelve
+// (en vez de nil) para que ensureAssignment y compañía corten la petición: antes un
+// operador sin asignación recibía 403 pero el handler seguía y registraba la entrada.
+var errResponded = errors.New("response already written")
+
 func problem(c fiber.Ctx, status int, code, detail string) error {
 	id := traceID(c)
-	return c.Status(status).Type("application/problem+json").JSON(fiber.Map{"type": "https://errors.example.pe/" + code, "title": code, "status": status, "code": code, "detail": detail, "trace_id": id})
+	if err := c.Status(status).Type("application/problem+json").JSON(fiber.Map{"type": "https://errors.example.pe/" + code, "title": code, "status": status, "code": code, "detail": detail, "trace_id": id}); err != nil {
+		return err
+	}
+	return errResponded
+}
+
+func errorHandler(c fiber.Ctx, err error) error {
+	if errors.Is(err, errResponded) {
+		return nil
+	}
+	return fiber.DefaultErrorHandler(c, err)
 }
 func (r *Router) auth(scope string) fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -82,6 +98,9 @@ func (r *Router) auth(scope string) fiber.Handler {
 			if !hasScope(verified.Scopes, scope) {
 				return problem(c, 403, "scope_forbidden", "el token no tiene el scope requerido")
 			}
+			// El rol normalizado (owner/admin => manager) debe llegar a los handlers.
+			verified.Role = role
+			verified.TraceID = traceID(c)
 			c.Locals("claims", verified)
 			return c.Next()
 		}
@@ -259,6 +278,7 @@ func (r *Router) routes() {
 	a.Post("/onsite/v1/attendance/facts/:id/voids", r.auth("onsite:void"), r.voidFact)
 	a.Get("/onsite/v1/attendance", r.auth("onsite:read"), r.list)
 	a.Get("/onsite/v1/dashboard", r.auth("onsite:read"), r.dashboard)
+	r.registerScanRoutes(a)
 }
 
 func allowedOrigin(origin string) string {
@@ -321,8 +341,8 @@ func (r *Router) revokeDevice(c fiber.Ctx) error {
 		Reason string `json:"reason"`
 	}
 	_ = json.Unmarshal(c.Body(), &b)
-	if strings.TrimSpace(b.Reason) == "" {
-		return problem(c, 400, "reason_required", "reason es obligatorio")
+	if !domain.ValidReason(b.Reason) {
+		return problem(c, 422, "reason_required", "el motivo debe tener al menos 5 caracteres")
 	}
 	if err := r.Service.Devices.RevokeDevice(c.Context(), c.Params("id"), claims(c).TenantID, b.Reason); err != nil {
 		return problem(c, 404, "device_not_found", "dispositivo no encontrado")
@@ -450,8 +470,11 @@ func (r *Router) voidFact(c fiber.Ctx) error {
 	var b struct {
 		Reason string `json:"reason"`
 	}
-	if json.Unmarshal(c.Body(), &b) != nil || strings.TrimSpace(b.Reason) == "" {
-		return problem(c, 400, "reason_required", "reason es obligatorio")
+	if json.Unmarshal(c.Body(), &b) != nil {
+		return problem(c, 400, "invalid_body", "JSON inválido")
+	}
+	if !domain.ValidReason(b.Reason) {
+		return problem(c, 422, "reason_required", "el motivo debe tener al menos 5 caracteres")
 	}
 	key := strings.TrimSpace(c.Get("Idempotency-Key"))
 	if _, err := uuid.Parse(key); err != nil {
@@ -463,6 +486,9 @@ func (r *Router) voidFact(c fiber.Ctx) error {
 	if err != nil {
 		if errors.Is(err, domain.ErrIdempotencyKeyReused) {
 			return problem(c, 409, "idempotency_key_reused", "la clave fue usada con otro body")
+		}
+		if errors.Is(err, domain.ErrAlreadyVoided) {
+			return problem(c, 409, "already_voided", "el registro ya fue anulado")
 		}
 		return problem(c, 409, err.Error(), err.Error())
 	}

@@ -231,6 +231,18 @@ func (s *Store) Void(ctx context.Context, factID, reason, bodyHash string, c por
 	if originalType == "void" {
 		return domain.AttendanceFact{}, domain.ErrInvalidState
 	}
+	// Serializa los cambios del mismo ticket mientras se recalcula su presencia.
+	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('onsite:ticket:' || $1))`, ticketID); err != nil {
+		return domain.AttendanceFact{}, err
+	}
+	// Un registro sólo se anula una vez (además lo garantiza el índice único de la migración 000008).
+	var alreadyVoided bool
+	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM onsite.attendance_facts WHERE type='void' AND compensates_fact_id=$1)`, factID).Scan(&alreadyVoided); err != nil {
+		return domain.AttendanceFact{}, err
+	}
+	if alreadyVoided {
+		return domain.AttendanceFact{}, domain.ErrAlreadyVoided
+	}
 	out.ID = uuid.NewString()
 	out.TicketID = ticketID
 	out.Type = "void"
@@ -241,15 +253,15 @@ func (s *Store) Void(ctx context.Context, factID, reason, bodyHash string, c por
 	if _, err = tx.Exec(ctx, `INSERT INTO onsite.attendance_facts(id,ticket_id,event_id,scope_id,type,actor_id,device_id,occurred_at,reason,compensates_fact_id) VALUES($1,$2,$3::uuid,$4::uuid,'void',$5::uuid,$6::uuid,$7,$8,$9::uuid)`, out.ID, ticketID, eventUUID, scopeUUID, c.ActorID, c.DeviceID, out.OccurredAt, reason, factID); err != nil {
 		return domain.AttendanceFact{}, err
 	}
-	_, err = tx.Exec(ctx, `DELETE FROM onsite.effective_attendance WHERE ticket_id=$1 AND event_id=$2::uuid AND scope_id=$3::uuid`, ticketID, eventUUID, scopeUUID)
-	if err != nil {
+	// Antes se borraba la presencia siempre; anular una salida debe devolverla.
+	if err = recomputePresence(ctx, tx, ticketID, eventUUID, scopeUUID); err != nil {
 		return domain.AttendanceFact{}, err
 	}
 	body, _ := json.Marshal(out)
 	if _, err = tx.Exec(ctx, `INSERT INTO onsite.idempotency_records(key,actor_id,request_hash,status_code,response_body) VALUES($1,$2,$3,201,$4)`, key, c.ActorID, bodyHash, body); err != nil {
 		return domain.AttendanceFact{}, err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO onsite.audit_log(id,tenant_id,actor_id,action,resource_type,resource_id,trace_id,metadata) VALUES($1,$2,$3,'attendance.void','attendance_fact',$4,$5,jsonb_build_object('reason',$6))`, uuid.NewString(), c.TenantID, c.ActorID, out.ID, c.TraceID, reason); err != nil {
+	if _, err = tx.Exec(ctx, `INSERT INTO onsite.audit_log(id,tenant_id,actor_id,action,resource_type,resource_id,trace_id,metadata) VALUES($1,$2,$3,'attendance.void','attendance_fact',$4,$5,jsonb_build_object('reason',$6::text))`, uuid.NewString(), c.TenantID, c.ActorID, out.ID, c.TraceID, reason); err != nil {
 		return domain.AttendanceFact{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -343,11 +355,54 @@ func (s *Store) UpdateDevice(ctx context.Context, d domain.Device) (domain.Devic
 	}
 	return d, err
 }
+
+// RevokeDevice guarda el motivo y cierra los turnos abiertos del dispositivo en la misma transacción.
 func (s *Store) RevokeDevice(ctx context.Context, id, tenant, reason string) error {
-	tag, err := s.Pool.Exec(ctx, `UPDATE onsite.devices SET status='revoked',revoked_at=now() WHERE id=$1 AND tenant_id=$2::uuid AND status='active'`, id, tenant)
-	if err == nil && tag.RowsAffected() == 0 {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `UPDATE onsite.devices SET status='revoked',revoked_at=now(),revoked_reason=$3 WHERE id=$1 AND tenant_id=$2::uuid AND status='active'`, id, tenant, strings.TrimSpace(reason))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
+	if _, err := tx.Exec(ctx, `UPDATE onsite.shifts SET status='closed',closed_at=now() WHERE device_id=$1 AND tenant_id=$2::uuid AND status='open'`, id, tenant); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// recomputePresence vuelve a calcular la presencia efectiva del ticket en la zona.
+func recomputePresence(ctx context.Context, tx pgx.Tx, ticket, eventUUID, scopeUUID string) error {
+	rows, err := tx.Query(ctx, `SELECT f.id::text,f.type,f.occurred_at,EXISTS(SELECT 1 FROM onsite.attendance_facts v WHERE v.type='void' AND v.compensates_fact_id=f.id)
+		FROM onsite.attendance_facts f WHERE f.ticket_id=$1 AND f.event_id=$2::uuid AND f.scope_id=$3::uuid AND f.type IN ('check_in','check_out')`, ticket, eventUUID, scopeUUID)
+	if err != nil {
+		return err
+	}
+	var entries []domain.TimelineEntry
+	for rows.Next() {
+		var e domain.TimelineEntry
+		if err := rows.Scan(&e.FactID, &e.Type, &e.OccurredAt, &e.Voided); err != nil {
+			rows.Close()
+			return err
+		}
+		entries = append(entries, e)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	factID, at := domain.EffectivePresence(entries)
+	if factID == "" {
+		_, err = tx.Exec(ctx, `DELETE FROM onsite.effective_attendance WHERE ticket_id=$1 AND event_id=$2::uuid AND scope_id=$3::uuid`, ticket, eventUUID, scopeUUID)
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO onsite.effective_attendance(ticket_id,event_id,scope_id,check_in_fact_id,checked_in_at) VALUES($1,$2::uuid,$3::uuid,$4::uuid,$5)
+		ON CONFLICT (ticket_id,event_id,scope_id) DO UPDATE SET check_in_fact_id=EXCLUDED.check_in_fact_id,checked_in_at=EXCLUDED.checked_in_at`, ticket, eventUUID, scopeUUID, factID, at)
 	return err
 }
 func (s *Store) CreateShift(ctx context.Context, sh domain.Shift, c ports.Claims) (domain.Shift, error) {
