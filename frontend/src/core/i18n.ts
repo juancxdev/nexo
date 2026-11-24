@@ -132,6 +132,10 @@ const messages = {
     "participation.ticketPreparing": "Preparando código QR…",
     "participation.ticketQrAlt": "Código QR del ticket",
     "participation.ticketDownload": "Descargar QR",
+    "participation.credentialAvailable": "Credencial HukID disponible",
+    "participation.credentialInstructions": "Escanea este QR o pega la oferta en tu wallet HukID.",
+    "participation.credentialPreparing": "Preparando credencial HukID…",
+    "participation.credentialPreparingDescription": "La credencial se está solicitando al emisor.",
   },
   en: {
     "nav.workspace": "Workspace",
@@ -261,6 +265,10 @@ const messages = {
     "participation.ticketPreparing": "Preparing QR code…",
     "participation.ticketQrAlt": "Ticket QR code",
     "participation.ticketDownload": "Download QR",
+    "participation.credentialAvailable": "HukID credential available",
+    "participation.credentialInstructions": "Scan this QR or paste the offer into your HukID wallet.",
+    "participation.credentialPreparing": "Preparing HukID credential…",
+    "participation.credentialPreparingDescription": "The credential is being requested from the issuer.",
   },
 } as const;
 export function readLocale(): Locale {

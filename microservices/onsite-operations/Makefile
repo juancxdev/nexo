@@ -6,7 +6,7 @@ DATABASE_URL ?= postgres://nexo:nexo-local-only@localhost:5433/nexo?sslmode=disa
 .PHONY: db-up db-migrate db-seed db-reset run compose-up compose-down test vet
 
 db-up:
-	$(COMPOSE) up -d postgres
+	$(COMPOSE) up -d --wait postgres
 db-migrate:
 	$(COMPOSE_INIT) run --rm --no-deps migrate-core
 	$(COMPOSE_INIT) run --rm --no-deps migrate-onsite
