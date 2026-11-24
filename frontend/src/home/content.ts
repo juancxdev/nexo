@@ -1,41 +1,50 @@
 import type {Locale} from '../core/i18n';
 import {homeImages} from './images';
+import {scheduleFromToday} from './events';
+import type {DemoSchedule, EventStatus, HomeEvent} from './events';
 
-export type EventStatus = 'live' | 'open' | 'lastSeats';
-export type HomeEvent = {
-  id: string;
-  status: EventStatus;
-  statusLabel: string;
-  category: string;
-  date: string;
-  title: string;
-  description: string;
-  place: string;
-  image: string;
-  imageAlt: string;
-};
-export type MetricTone = 'default' | 'primary' | 'accent';
-export type HomeMetric = {value: string; label: string; tone: MetricTone};
-export type AwardIcon = 'trophy' | 'award' | 'medal';
+/** Textos de un evento de demostración; sus fechas salen de `demoEventSchedule`. */
+export type HomeEventText = Pick<HomeEvent, 'id' | 'title' | 'description' | 'category' | 'place' | 'imageAlt'>;
 export type OfferIcon = 'mentoring' | 'training' | 'networking' | 'coworking';
 
 export type HomeContent = {
   skipLink: string;
   nav: {label: string; logoLabel: string; access: string};
   hero: {titleLead: string; titleHighlight: string; description: string; explore: string; create: string};
-  events: {label: string; register: string; items: HomeEvent[]};
-  metrics: {label: string; items: HomeMetric[]};
-  awards: {title: string; description: string; items: {icon: AwardIcon; title: string}[]};
+  events: {
+    label: string;
+    register: string;
+    details: string;
+    createYours: string;
+    previous: string;
+    next: string;
+    status: Record<EventStatus, string>;
+    items: HomeEventText[];
+  };
   offer: {title: string; description: string; items: {icon: OfferIcon; title: string; description: string}[]};
-  allies: {title: string; description: string; imageAlt: string};
   footer: {rights: string};
 };
 
-const images = {
-  techSummit: homeImages.techSummit,
-  masterclass: homeImages.masterclass,
-  productForum: homeImages.productForum,
+/**
+ * Lista de demostración mientras no exista la Public Read API de eventos.
+ * Las fechas son relativas a hoy (igual que los seeds de Onsite y Eventos), así siempre
+ * hay eventos en los tres estados. Los nombres de Demo Day y del Encuentro vienen de esos seeds.
+ */
+export const demoEventSchedule: Record<string, DemoSchedule & {image: string}> = {
+  'demo-day': {dayOffset: 0, days: 1, image: homeImages.techSummit},
+  'masterclass': {dayOffset: 4, days: 1, startHour: 10, image: homeImages.masterclass},
+  'product-forum': {dayOffset: 11, days: 2, image: homeImages.productForum},
+  'encuentro-innovacion': {dayOffset: 30, days: 1, startHour: 11, image: homeImages.masterclass},
+  'tech-summit': {dayOffset: -10, days: 3, image: homeImages.techSummit},
+  'biostartups': {dayOffset: -25, days: 2, image: homeImages.productForum},
 };
+
+export function buildDemoEvents(items: HomeEventText[], now: Date = new Date()): HomeEvent[] {
+  return items.map(item => {
+    const {image, ...schedule} = demoEventSchedule[item.id];
+    return {...item, image, ...scheduleFromToday(schedule, now)};
+  });
+}
 
 export const homeContent: Record<Locale, HomeContent> = {
   es: {
@@ -51,32 +60,18 @@ export const homeContent: Record<Locale, HomeContent> = {
     events: {
       label: 'Eventos destacados',
       register: 'Registrarse',
+      details: 'Ver detalles',
+      createYours: 'Crea el tuyo',
+      previous: 'Ver eventos anteriores',
+      next: 'Ver más eventos',
+      status: {pending: 'Pendiente', inProgress: 'En proceso', finished: 'Finalizado'},
       items: [
-        {id: 'tech-summit', status: 'live', statusLabel: 'En vivo', category: 'Tecnología', date: '14 - 16 Noviembre, 2025', title: 'Global Tech Summit 2025: Cloud & AI', description: 'El congreso tecnológico líder que reúne a directores de tecnología, fundadores de startups e ingenieros de software pioneros en Latinoamérica.', place: 'Ciudad Digital & Streaming', image: images.techSummit, imageAlt: 'Auditorio de conferencia tecnológica con pantallas y público'},
-        {id: 'masterclass', status: 'open', statusLabel: 'Inscripciones abiertas', category: 'Masterclass', date: '28 Noviembre, 2025', title: 'Masterclass de Innovación y Venture Capital', description: 'Aprende estrategias de levantamiento de capital institucional, estructuración de rondas seed y escalamiento acelerado con socios inversores.', place: 'Campus Central & Online', image: images.masterclass, imageAlt: 'Taller colaborativo con personas trabajando en mesas con laptops'},
-        {id: 'product-forum', status: 'lastSeats', statusLabel: 'Últimos cupos', category: 'Diseño', date: '05 Diciembre, 2025', title: 'Product Experience Forum & Expo', description: 'Un encuentro exclusivo para diseñadores de experiencia, líderes de producto y directores creativos enfocados en interfaces de próxima generación.', place: 'Hub de Innovación', image: images.productForum, imageAlt: 'Exposición de diseño de producto con prototipos interactivos'},
-      ],
-    },
-    metrics: {
-      label: 'Cifras clave',
-      items: [
-        {value: '+10', label: 'Programas', tone: 'default'},
-        {value: '+300', label: 'Emprendedores impactados', tone: 'default'},
-        {value: '+40', label: 'Startups incubadas', tone: 'accent'},
-        {value: '$500k', label: 'Capital semilla', tone: 'default'},
-        {value: '+20', label: 'Mentores', tone: 'primary'},
-        {value: '+8', label: 'Startups financiadas', tone: 'default'},
-        {value: '+30', label: 'Talleres', tone: 'default'},
-        {value: '+2', label: 'Congresos', tone: 'accent'},
-      ],
-    },
-    awards: {
-      title: 'Premios y Reconocimientos',
-      description: 'Avalados por organismos internacionales de tecnología, auditoría de pagos y gremios de organizadores profesionales.',
-      items: [
-        {icon: 'trophy', title: 'Primera incubadora en llevar emprendimientos amazónicos a Europa'},
-        {icon: 'award', title: '2 startups en Programas de Mentor Day - España'},
-        {icon: 'medal', title: 'Articulación con Gobiernos regionales y toda la Red CITE'},
+        {id: 'demo-day', category: 'Emprendimiento', title: 'Demo Day IncubaUNAS', description: 'Las startups incubadas presentan sus proyectos ante mentores, inversionistas y aliados del ecosistema.', place: 'Auditorio UNAS', imageAlt: 'Auditorio con público frente a un escenario con pantallas'},
+        {id: 'masterclass', category: 'Masterclass', title: 'Masterclass de Innovación y Venture Capital', description: 'Aprende estrategias de levantamiento de capital institucional, estructuración de rondas seed y escalamiento acelerado con socios inversores.', place: 'Campus Central & Online', imageAlt: 'Taller colaborativo con personas trabajando en mesas con laptops'},
+        {id: 'product-forum', category: 'Diseño', title: 'Product Experience Forum & Expo', description: 'Un encuentro exclusivo para diseñadores de experiencia, líderes de producto y directores creativos enfocados en interfaces de próxima generación.', place: 'Hub de Innovación', imageAlt: 'Exposición de diseño de producto con prototipos interactivos'},
+        {id: 'encuentro-innovacion', category: 'Innovación', title: 'Encuentro de innovación', description: 'Una jornada para conectar emprendedores, investigadores y empresas alrededor de proyectos con impacto en la región.', place: 'Pabellón de Innovación', imageAlt: 'Personas conversando en mesas de trabajo de un espacio de innovación'},
+        {id: 'tech-summit', category: 'Tecnología', title: 'Global Tech Summit: Cloud & AI', description: 'El congreso tecnológico que reúne a directores de tecnología, fundadores de startups e ingenieros de software pioneros en Latinoamérica.', place: 'Ciudad Digital & Streaming', imageAlt: 'Auditorio de conferencia tecnológica con pantallas y público'},
+        {id: 'biostartups', category: 'Agroinnovación', title: 'Feria de Biostartups Amazónicas', description: 'Emprendimientos de biotecnología y agroinnovación de la Amazonía peruana muestran sus productos a compradores y aliados.', place: 'Campus UNAS, Tingo María', imageAlt: 'Asistentes recorriendo stands con prototipos en una feria'},
       ],
     },
     offer: {
@@ -88,11 +83,6 @@ export const homeContent: Record<Locale, HomeContent> = {
         {icon: 'networking', title: 'Networking', description: 'Acceso a una red de emprendedores y mentores.'},
         {icon: 'coworking', title: 'Coworking', description: 'Espacios de trabajo colaborativo totalmente equipados.'},
       ],
-    },
-    allies: {
-      title: 'Nuestros Aliados',
-      description: 'Empresas e instituciones que confían y colaboran con nuestra incubadora',
-      imageAlt: 'Logotipos de las instituciones y empresas aliadas',
     },
     footer: {rights: 'Todos los derechos reservados.'},
   },
@@ -109,32 +99,18 @@ export const homeContent: Record<Locale, HomeContent> = {
     events: {
       label: 'Featured events',
       register: 'Register',
+      details: 'View details',
+      createYours: 'Create yours',
+      previous: 'Show previous events',
+      next: 'Show more events',
+      status: {pending: 'Upcoming', inProgress: 'In progress', finished: 'Finished'},
       items: [
-        {id: 'tech-summit', status: 'live', statusLabel: 'Live', category: 'Technology', date: 'November 14 - 16, 2025', title: 'Global Tech Summit 2025: Cloud & AI', description: 'The leading tech conference bringing together CTOs, startup founders and pioneering software engineers across Latin America.', place: 'Digital City & Streaming', image: images.techSummit, imageAlt: 'Tech conference auditorium with screens and audience'},
-        {id: 'masterclass', status: 'open', statusLabel: 'Registration open', category: 'Masterclass', date: 'November 28, 2025', title: 'Innovation and Venture Capital Masterclass', description: 'Learn institutional fundraising strategies, seed round structuring and accelerated scaling with investment partners.', place: 'Main Campus & Online', image: images.masterclass, imageAlt: 'Collaborative workshop with people working at tables with laptops'},
-        {id: 'product-forum', status: 'lastSeats', statusLabel: 'Last seats', category: 'Design', date: 'December 05, 2025', title: 'Product Experience Forum & Expo', description: 'An exclusive gathering for experience designers, product leaders and creative directors focused on next-generation interfaces.', place: 'Innovation Hub', image: images.productForum, imageAlt: 'Product design exhibition with interactive prototypes'},
-      ],
-    },
-    metrics: {
-      label: 'Key figures',
-      items: [
-        {value: '+10', label: 'Programs', tone: 'default'},
-        {value: '+300', label: 'Entrepreneurs reached', tone: 'default'},
-        {value: '+40', label: 'Incubated startups', tone: 'accent'},
-        {value: '$500k', label: 'Seed capital', tone: 'default'},
-        {value: '+20', label: 'Mentors', tone: 'primary'},
-        {value: '+8', label: 'Funded startups', tone: 'default'},
-        {value: '+30', label: 'Workshops', tone: 'default'},
-        {value: '+2', label: 'Conferences', tone: 'accent'},
-      ],
-    },
-    awards: {
-      title: 'Awards and Recognition',
-      description: 'Endorsed by international technology bodies, payment auditors and professional event organizer associations.',
-      items: [
-        {icon: 'trophy', title: 'First incubator to take Amazonian ventures to Europe'},
-        {icon: 'award', title: '2 startups in Mentor Day programs - Spain'},
-        {icon: 'medal', title: 'Partnership with regional governments and the entire CITE Network'},
+        {id: 'demo-day', category: 'Entrepreneurship', title: 'IncubaUNAS Demo Day', description: 'Incubated startups pitch their projects to mentors, investors and ecosystem partners.', place: 'UNAS Auditorium', imageAlt: 'Auditorium with an audience facing a stage with screens'},
+        {id: 'masterclass', category: 'Masterclass', title: 'Innovation and Venture Capital Masterclass', description: 'Learn institutional fundraising strategies, seed round structuring and accelerated scaling with investment partners.', place: 'Main Campus & Online', imageAlt: 'Collaborative workshop with people working at tables with laptops'},
+        {id: 'product-forum', category: 'Design', title: 'Product Experience Forum & Expo', description: 'An exclusive gathering for experience designers, product leaders and creative directors focused on next-generation interfaces.', place: 'Innovation Hub', imageAlt: 'Product design exhibition with interactive prototypes'},
+        {id: 'encuentro-innovacion', category: 'Innovation', title: 'Innovation Meetup', description: 'A day to connect entrepreneurs, researchers and companies around projects with impact in the region.', place: 'Innovation Pavilion', imageAlt: 'People talking at work tables in an innovation space'},
+        {id: 'tech-summit', category: 'Technology', title: 'Global Tech Summit: Cloud & AI', description: 'The tech conference bringing together CTOs, startup founders and pioneering software engineers across Latin America.', place: 'Digital City & Streaming', imageAlt: 'Tech conference auditorium with screens and audience'},
+        {id: 'biostartups', category: 'Agro-innovation', title: 'Amazonian Biostartups Fair', description: 'Biotech and agro-innovation ventures from the Peruvian Amazon showcase their products to buyers and partners.', place: 'UNAS Campus, Tingo María', imageAlt: 'Attendees walking past booths with prototypes at a fair'},
       ],
     },
     offer: {
@@ -146,11 +122,6 @@ export const homeContent: Record<Locale, HomeContent> = {
         {icon: 'networking', title: 'Networking', description: 'Access to a network of entrepreneurs and mentors.'},
         {icon: 'coworking', title: 'Coworking', description: 'Fully equipped collaborative workspaces.'},
       ],
-    },
-    allies: {
-      title: 'Our Partners',
-      description: 'Companies and institutions that trust and collaborate with our incubator',
-      imageAlt: 'Logos of partner institutions and companies',
     },
     footer: {rights: 'All rights reserved.'},
   },
