@@ -13,7 +13,44 @@ var (
 	ErrNotPresent             = errors.New("not_present")
 	ErrInvalidState           = errors.New("invalid_state_transition")
 	ErrDeviceRevoked          = errors.New("device_revoked")
+	ErrAlreadyVoided          = errors.New("already_voided")
+	ErrReasonRequired         = errors.New("reason_required")
 )
+
+// MinReasonLength es el largo mínimo de un motivo de anulación o revocación.
+const MinReasonLength = 5
+
+// ValidReason exige un motivo con contenido real (no "x" ni espacios).
+func ValidReason(reason string) bool {
+	return len([]rune(strings.TrimSpace(reason))) >= MinReasonLength
+}
+
+// TimelineEntry es un hecho de entrada o salida con su estado de anulación.
+type TimelineEntry struct {
+	FactID, Type string
+	OccurredAt   time.Time
+	Voided       bool
+}
+
+// EffectivePresence recorre la historia del ticket ignorando lo anulado: el último
+// hecho vigente decide. Si es una entrada, devuelve su ID (la persona está presente).
+// Ejemplo: entrada, salida y se anula la salida => vuelve a estar presente.
+func EffectivePresence(entries []TimelineEntry) (string, time.Time) {
+	var last *TimelineEntry
+	for i := range entries {
+		e := entries[i]
+		if e.Voided || (e.Type != "check_in" && e.Type != "check_out") {
+			continue
+		}
+		if last == nil || !e.OccurredAt.Before(last.OccurredAt) {
+			last = &entries[i]
+		}
+	}
+	if last == nil || last.Type != "check_in" {
+		return "", time.Time{}
+	}
+	return last.FactID, last.OccurredAt
+}
 
 type Ticket struct {
 	ID, EventID, Scope, Status, MaskedHolder, SearchCode string

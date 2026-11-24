@@ -23,12 +23,6 @@ paths:
       operationId: issueCertificate
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CertificateCreate'}}}}
       responses: {'201': {description: Certificate evidence created; delivery is delegated to HukID}}
-  /operations/v1/participation-credentials:
-    post:
-      operationId: requestParticipationCredential
-      parameters: [{in: header, name: Idempotency-Key, required: true, schema: {type: string}}]
-      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ParticipationCredentialCreate'}}}}
-      responses: {'202': {description: Participation credential accepted}, '409': {$ref: '#/components/responses/Problem'}}
   /operations/v1/certificates/{id}/hukid-deliveries:
     post:
       operationId: requestHukidDelivery
@@ -49,17 +43,58 @@ paths:
       operationId: retryHukidDelivery
       parameters: [{in: path, name: id, required: true, schema: {type: string, format: uuid}}]
       responses: {'202': {description: Delivery requeued}, '409': {$ref: '#/components/responses/Problem'}}
+  /operations/v1/report-jobs/{id}/artifact:
+    get:
+      operationId: downloadReport
+      parameters: [{in: path, name: id, required: true, schema: {type: string, format: uuid}}]
+      responses: {'200': {description: 'Archivo CSV (BOM UTF-8, fórmulas neutralizadas) o JSON'}, '409': {description: report_not_ready}, '410': {description: report_purged}}
+  /operations/v1/report-jobs/{id}/retries:
+    post:
+      operationId: retryReport
+      parameters: [{in: path, name: id, required: true, schema: {type: string, format: uuid}}]
+      responses: {'202': {description: Vuelve a pendiente}, '409': {description: invalid_state}}
+  /operations/v1/report-jobs/{id}/purges:
+    post:
+      operationId: purgeReport
+      parameters: [{in: path, name: id, required: true, schema: {type: string, format: uuid}}]
+      responses: {'204': {description: Archivo eliminado}, '409': {description: invalid_state}}
+  /operations/v1/certificates:
+    get:
+      operationId: listCertificates
+      parameters: [{in: query, name: event_id, schema: {type: string}}]
+      responses: {'200': {description: Certificados del tenant}}
+  /operations/v1/eligible-registrations:
+    get:
+      operationId: listEligibleRegistrations
+      description: Registros confirmados con una entrada vigente (regla attendance@1.0.0), con su certificado vigente si existe.
+      parameters: [{in: query, name: event_id, required: true, schema: {type: string}}]
+      responses: {'200': {description: Elegibles}}
+  /operations/v1/certificates/{id}/revocations:
+    post:
+      operationId: revokeCertificate
+      description: Revoca con motivo y cancela las entregas HukID que no terminaron.
+      parameters: [{in: path, name: id, required: true, schema: {type: string, format: uuid}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Reason'}}}}
+      responses: {'200': {description: Revocado}, '409': {description: certificate_not_revocable}, '422': {description: reason_required}}
+  /operations/v1/certificates/{id}/reissues:
+    post:
+      operationId: reissueCertificate
+      description: Reemplaza el certificado volviendo a comprobar la elegibilidad; el anterior queda replaced y enlazado.
+      parameters: [{in: path, name: id, required: true, schema: {type: string, format: uuid}}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Reason'}}}}
+      responses: {'201': {description: Nuevo certificado}, '409': {description: certificate_not_replaceable}, '422': {description: 'reason_required | not_eligible'}}
   /public/v1/certificates/{code}:
     get:
       operationId: verifyCertificate
       security: []
       parameters: [{in: path, name: code, required: true, schema: {type: string}}]
+      description: 'JSON por defecto. Con Accept text/html o ?format=html devuelve una página legible; nunca muestra el nombre del titular.'
       responses: {'200': {description: Verification result}, '404': {$ref: '#/components/responses/Problem'}}
 components:
   schemas:
-    ReportJobCreate: {type: object, required: [event_id], properties: {event_id: {type: string}, scope: {type: string}, format: {type: string, enum: [csv, json]}}}
-    CertificateCreate: {type: object, required: [event_id, registration_id, display_name], properties: {event_id: {type: string}, registration_id: {type: string}, display_name: {type: string}}}
-    ParticipationCredentialCreate: {type: object, required: [event_id, registration_id, ticket_id], properties: {event_id: {type: string}, registration_id: {type: string}, ticket_id: {type: string}}}
+    ReportJobCreate: {type: object, required: [event_id], properties: {event_id: {type: string}, scope: {type: string, description: Vacío = todas las zonas}, format: {type: string, enum: [csv, json]}, report_type: {type: string, enum: [attendance, presence, rejections, summary], default: attendance}}}
+    Reason: {type: object, required: [reason], properties: {reason: {type: string, minLength: 5}}}
+    CertificateCreate: {type: object, required: [event_id, registration_id], description: 'Elegibilidad attendance@1.0.0: registro confirmado en Participation y entrada vigente en Onsite. El nombre se toma de Participation (display_name del cliente se ignora). 422 not_eligible / registration_not_found; 409 already_issued.', properties: {event_id: {type: string}, registration_id: {type: string}}}
     HukidDeliveryCreate: {type: object, required: [consent], properties: {consent: {type: boolean, description: Explicit consent to include displayName in the verifiable credential claims}}}
     Problem: {type: object, required: [type, title, status, code], properties: {type: {type: string}, title: {type: string}, status: {type: integer}, code: {type: string}, detail: {type: string}}}
   responses: {Problem: {description: RFC 9457 problem, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}}

@@ -28,11 +28,6 @@ services:
       NEXO_CORE_API_ADDR: :8081
     volumes: [nexo_core_keys:/var/lib/nexo/keys]
     ports: ["8081:8081"]
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8081/healthz"]
-      interval: 10s
-      timeout: 3s
-      retries: 10
   onsite-operations-api:
     build: ./microservices/onsite-operations
     depends_on: {postgres: {condition: service_healthy}}
@@ -44,8 +39,6 @@ services:
       NEXO_JWT_ISSUER: http://core-api:8081
       NEXO_JWT_AUDIENCE: nexo-services
       CORS_ALLOWED_ORIGINS: http://localhost:5174,http://127.0.0.1:5174
-      HUKID_BASE_URL: ${HUKID_BASE_URL:-http://hukid-simulator:8090}
-      HUKID_OPERATOR_TOKEN: ${HUKID_OPERATOR_TOKEN:-dev-operator}
     ports: ["8082:8082"]
   participation-api:
     build: ./microservices/participation
@@ -55,8 +48,6 @@ services:
       DATABASE_URL: postgres://participation_app:participation-app-local-only@postgres:5432/nexo?sslmode=disable
       PARTICIPATION_ADDR: :8084
       CORS_ALLOWED_ORIGINS: http://localhost:5174,http://127.0.0.1:5174
-      EVENT_OPERATIONS_URL: http://event-operations-api:8083
-      NEXO_INTERNAL_SERVICE_TOKEN: nexo-local-service-only
     ports: ["8084:8084"]
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8084/health/ready"]
@@ -77,13 +68,7 @@ services:
       # Development-only AES-256 key. Production injects it through a secret manager.
       HUKID_CLAIMS_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
       NEXO_PUBLIC_BASE_URL: http://localhost:8083
-      NEXO_INTERNAL_SERVICE_TOKEN: nexo-local-service-only
     ports: ["8083:8083"]
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8083/health/ready"]
-      interval: 10s
-      timeout: 3s
-      retries: 10
   event-configuration-api:
     build: ./microservices/event-configuration
     depends_on: {postgres: {condition: service_healthy}}
@@ -145,15 +130,7 @@ services:
     ports: ["1025:1025", "8025:8025"]
   hukid-simulator:
     build: ./tools/hukid-simulator
-    environment:
-      APP_ENV: development
-      HUKID_PUBLIC_BASE_URL: ${HUKID_PUBLIC_BASE_URL:-http://192.168.1.46:8090}
     ports: ["8090:8090"]
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/health/live"]
-      interval: 10s
-      timeout: 3s
-      retries: 10
 
 volumes:
   nexo_pg_data:

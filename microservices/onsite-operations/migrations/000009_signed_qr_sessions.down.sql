@@ -1,0 +1,10 @@
+DROP TABLE IF EXISTS onsite.session_entries;
+DROP TABLE IF EXISTS onsite.ticket_sessions;
+DROP TABLE IF EXISTS onsite.session_rules;
+DROP TABLE IF EXISTS onsite.scan_rejections;
+ALTER TABLE onsite.ticket_projections DROP COLUMN IF EXISTS provisional;
+DROP INDEX IF EXISTS onsite.events_participation_id;
+ALTER TABLE onsite.events DROP COLUMN IF EXISTS participation_event_id;
+DROP TABLE IF EXISTS onsite.revocation_state;
+DROP TABLE IF EXISTS onsite.ticket_revocations;
+DROP TABLE IF EXISTS onsite.ticket_keys;
