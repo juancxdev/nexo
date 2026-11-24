@@ -267,8 +267,10 @@ func (s *Server) createSession(ctx context.Context, u auth.User) (map[string]any
 	if len(claims.TenantIDs) > 0 {
 		claims.TenantID = claims.TenantIDs[0]
 	}
-	claims.Roles = []string{"owner"}
-	claims.Scopes = []string{"onsite:checkin", "onsite:read", "onsite:void", "reports:read", "certificates:issue"}
+	// Los permisos se resuelven después de seleccionar el tenant mediante la
+	// membresía persistida; el login no debe asumir que todo usuario es owner.
+	claims.Roles = []string{}
+	claims.Scopes = []string{"auth:tenant-context"}
 	access, err := s.sign(claims)
 	if err != nil {
 		return nil, err
@@ -371,7 +373,7 @@ func (s *Server) tenantContext(w http.ResponseWriter, r *http.Request) {
 func scopesForRole(role string) []string {
 	switch role {
 	case "owner", "admin":
-		return []string{"onsite:checkin", "onsite:read", "onsite:void", "reports:read", "reports:export_sensitive", "communications:send", "certificates:issue", "certificates:revoke", "events:read", "events:write", "events:publish"}
+		return []string{"onsite:checkin", "onsite:read", "onsite:void", "reports:read", "reports:export_sensitive", "communications:send", "credentials:issue", "certificates:issue", "certificates:revoke", "events:read", "events:write", "events:publish"}
 	case "supervisor":
 		return []string{"onsite:checkin", "onsite:read", "onsite:void", "reports:read", "events:read", "events:write"}
 	case "staff":

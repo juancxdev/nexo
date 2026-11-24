@@ -6,7 +6,7 @@ DATABASE_URL ?= postgres://nexo:nexo-local-only@localhost:5433/nexo?sslmode=disa
 .PHONY: db-up db-migrate db-seed db-reset run compose-up compose-down test vet
 
 db-up:
-	$(COMPOSE) up -d postgres
+	$(COMPOSE) up -d --wait postgres
 db-migrate:
 	$(COMPOSE_INIT) run --rm --no-deps migrate-core
 	$(COMPOSE_INIT) run --rm --no-deps migrate-onsite
@@ -23,6 +23,6 @@ compose-down:
 	$(COMPOSE) down
 test:
 	$(MAKE) db-up db-migrate db-seed
-	ONSITE_TEST_DATABASE_URL="$(DATABASE_URL)" go test ./...
+	ONSITE_TEST_DATABASE_URL="$(DATABASE_URL)" APP_ENV=test NEXO_TEST_MODE=true go test ./...
 vet:
 	go vet ./...

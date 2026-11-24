@@ -113,6 +113,19 @@ func TestSimulatorCoversCanonicalErrorStatuses(t *testing.T) {
 	}
 }
 
+func TestSimulatorRejectsUnsupportedTxCodeDelivery(t *testing.T) {
+	s := &server{requests: map[string]issuance{}, tokens: map[string]time.Time{}, faults: map[string]faultConfig{}}
+	app := newApp(s)
+	token := issueTestToken(s)
+	req := httptest.NewRequest(http.MethodPost, "/v1/issuance-requests", bytes.NewBufferString(`{"issuerId":"issuer","credentialDefinition":"definition","claims":{"certificate":{"id":"tx-code"}},"delivery":{"flow":"pre-authorized_code","txCodeRequired":true}}`))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Idempotency-Key", "hukid-tx-code-0001")
+	resp, err := app.Test(req)
+	if err != nil || resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status=%d err=%v, want 422", resp.StatusCode, err)
+	}
+}
+
 func TestSimulatorConcurrentSameKeyIsIdempotent(t *testing.T) {
 	s := &server{requests: map[string]issuance{}, tokens: map[string]time.Time{}, faults: map[string]faultConfig{}}
 	app := newApp(s)

@@ -4,7 +4,7 @@ import QRCode from 'qrcode';
 import { Alert, Badge, Button, Card, Input, PageHeading } from '../../design-system';
 import { useI18n } from '../../core/i18n';
 import type { ModuleContext } from '../../platform/microfrontends/contracts';
-import { createParticipationClient, type ParticipationForm, type RegistrationReceipt, type TicketResponse } from './api';
+import { createParticipationClient, type HukidCredentialDelivery, type ParticipationForm, type RegistrationReceipt, type TicketResponse } from './api';
 import './participation.css';
 
 const defaultSite = import.meta.env.VITE_PARTICIPATION_SITE_SLUG || 'incuba-unas';
@@ -19,6 +19,7 @@ export function ParticipationModule({ context }: { context: ModuleContext }) {
   const [form, setForm] = useState<ParticipationForm | null>(null);
   const [receipt, setReceipt] = useState<RegistrationReceipt | null>(null);
   const [ticket, setTicket] = useState<TicketResponse | null>(null);
+  const [credential, setCredential] = useState<HukidCredentialDelivery | null>(null);
   const [values, setValues] = useState({ fullName: '', email: '', institution: '' });
   const [answers, setAnswers] = useState<Record<string, string | number | boolean>>({});
   const idempotencyKey = useRef(`participation-${crypto.randomUUID()}`);
@@ -51,6 +52,14 @@ export function ParticipationModule({ context }: { context: ModuleContext }) {
       setReceipt(result);
       if (result.state === 'confirmed' && result.self_access_token) {
         setTicket(await api.getTicket(result.id, result.self_access_token));
+        for (let attempt = 0; attempt < 12; attempt += 1) {
+          const delivery = await api.getCredential(result.id, result.self_access_token).catch(() => null);
+          if (delivery) {
+            setCredential(delivery);
+            if (delivery.credential_offer_uri || ['credential_issued', 'failed', 'cancelled'].includes(delivery.state)) break;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
       }
     } catch (reason: unknown) {
       setError(reason instanceof Error ? reason.message : t('participation.submitError'));
@@ -58,7 +67,7 @@ export function ParticipationModule({ context }: { context: ModuleContext }) {
   };
 
   if (loading) return <Card className="nx-participation-state"><p>{t('participation.loading')}</p></Card>;
-  if (receipt) return <ParticipationReceipt receipt={receipt} ticket={ticket} />;
+  if (receipt) return <ParticipationReceipt receipt={receipt} ticket={ticket} credential={credential} />;
 
   const isOpen = form?.binding_state === 'open';
   const answerProperties = Object.entries(form?.schema?.properties || {}).filter(([name]) => !['full_name', 'email', 'institution'].includes(name));
@@ -82,10 +91,10 @@ export function ParticipationModule({ context }: { context: ModuleContext }) {
   </div>;
 }
 
-function ParticipationReceipt({ receipt, ticket }: { receipt: RegistrationReceipt; ticket: TicketResponse | null }) {
+function ParticipationReceipt({ receipt, ticket, credential }: { receipt: RegistrationReceipt; ticket: TicketResponse | null; credential: HukidCredentialDelivery | null }) {
   const { t } = useI18n();
   const status = receipt.state === 'confirmed' ? t('participation.confirmed') : receipt.state === 'waitlisted' ? t('participation.waitlisted') : t('participation.pending');
-  return <div className="nx-participation-receipt"><Card><div className="nx-participation-success"><CheckCircle2 size={36} aria-hidden="true" /><span className="nx-eyebrow">{t('participation.receiptEyebrow')}</span><h1>{t('participation.receiptTitle')}</h1><p>{t('participation.receiptDescription')}</p><Badge tone="success">{status}</Badge></div><div className="nx-participation-receipt-details"><span>{t('participation.receiptId')}</span><strong>{receipt.id}</strong>{receipt.waitlist_position && <span>{t('participation.waitlistPosition', { position: String(receipt.waitlist_position) })}</span>}</div>{ticket?.ticket_jws && <div className="nx-participation-ticket"><Ticket size={24} aria-hidden="true" /><div><strong>{ticket.state === 'active' ? t('participation.ticketReady') : t('participation.ticketInvalid')}</strong><span>{ticket.state === 'active' ? t('participation.ticketPrivacy') : t('participation.ticketInvalidDescription')}</span>{ticket.state === 'active' && <TicketQr jws={ticket.ticket_jws}/>}</div></div>}</Card></div>;
+  return <div className="nx-participation-receipt"><Card><div className="nx-participation-success"><CheckCircle2 size={36} aria-hidden="true" /><span className="nx-eyebrow">{t('participation.receiptEyebrow')}</span><h1>{t('participation.receiptTitle')}</h1><p>{t('participation.receiptDescription')}</p><Badge tone="success">{status}</Badge></div><div className="nx-participation-receipt-details"><span>{t('participation.receiptId')}</span><strong>{receipt.id}</strong>{receipt.waitlist_position && <span>{t('participation.waitlistPosition', { position: String(receipt.waitlist_position) })}</span>}</div>{credential?.credential_offer_uri ? <div className="nx-participation-ticket"><Ticket size={24} aria-hidden="true" /><div><strong>{t('participation.credentialAvailable')}</strong><span>{t('participation.credentialInstructions')}</span><TicketQr jws={credential.credential_offer_uri}/></div></div> : <div className="nx-participation-ticket"><Ticket size={24} aria-hidden="true" /><div><strong>{t('participation.credentialPreparing')}</strong><span>{t('participation.credentialPreparingDescription')}</span></div></div>}</Card></div>;
 }
 
 function TicketQr({ jws }: { jws: string }) {

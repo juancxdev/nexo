@@ -20,4 +20,9 @@ make run
 
 La API escucha en `http://localhost:8082`. El seed es repetible y contiene Demo Day IncubaUNAS. En desarrollo/test se aceptan headers mock (`X-Mock-Actor`, `X-Mock-Role`, `X-Mock-Tenant`, `X-Mock-Device`); fuera de esos perfiles se rechazan.
 
-Rutas principales: `/health/live`, `/health/ready`, `/onsite/v1/readiness`, `/onsite/v1/tickets/search`, `/onsite/v1/attendance/check-ins`, `/onsite/v1/attendance`, `/onsite/v1/dashboard`.
+Rutas principales: `/health/live`, `/health/ready`, `/onsite/v1/readiness`, `/onsite/v1/tickets/search`, `/onsite/v1/attendance/check-ins`, `/onsite/v1/attendance`, `/onsite/v1/dashboard` y `/onsite/v1/verification-sessions`.
+
+La verificación HukID usa el contrato OID4VP del nodo Grupo 5. Onsite persiste el
+contexto tenant/evento/scope/ticket de la sesión y solo registra asistencia al
+observar un resultado `completed/pass`. En producción se exige presentar el
+`verification_session_id` al endpoint de check-in.

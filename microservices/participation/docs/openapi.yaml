@@ -36,11 +36,6 @@ paths:
       responses:
         '200': {description: Ticket, content: {application/json: {schema: {$ref: '#/components/schemas/Ticket'}}}}
         '401': {$ref: '#/components/responses/Problem'}
-  /participation/public/v1/ticket-keys:
-    get:
-      summary: Claves públicas Ed25519 (JWKS, kty OKP) con que Onsite verifica los QR sin conexión.
-      security: []
-      responses: {'200': {description: JWKS}}
 components:
   securitySchemes: {bearerAuth: {type: http, scheme: bearer}}
   parameters:
@@ -78,7 +73,7 @@ components:
       properties: {id: {type: string, format: uuid}, event_id: {type: string}, state: {type: string}, waitlist_position: {type: integer, nullable: true}, ticket_id: {type: string, nullable: true}, self_access_token: {type: string}}
     Ticket:
       type: object
-      properties: {id: {type: string, format: uuid}, state: {type: string}, ticket_jws: {type: string, description: 'JWS compacto EdDSA (Ed25519). Claims: jti (= ticket_id), aud onsite, organization_id, event_id, event_slug, scope main, exp, kid. Sin datos personales.'}, expires_at: {type: string, format: date-time}}
+      properties: {id: {type: string, format: uuid}, state: {type: string}, ticket_jws: {type: string}, expires_at: {type: string, format: date-time}}
     Problem:
       type: object
       required: [type,title,status,detail]

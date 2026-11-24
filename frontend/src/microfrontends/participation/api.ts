@@ -22,6 +22,15 @@ export type RegistrationReceipt = {
   waitlist_position?: number | null;
   ticket_id?: string | null;
   self_access_token: string;
+  hukid_state?: string;
+};
+
+export type HukidCredentialDelivery = {
+  id?: string;
+  credential_type?: string;
+  state: string;
+  credential_offer_uri?: string;
+  credential_id?: string;
 };
 
 export type TicketResponse = {
@@ -68,5 +77,6 @@ export function createParticipationClient(baseUrl: string) {
     loadForm: (site: string, event: string) => request<ParticipationForm>(`/participation/public/v1/sites/${encodeURIComponent(site)}/events/${encodeURIComponent(event)}/form`),
     register: (site: string, event: string, body: unknown, idempotencyKey: string) => request<RegistrationReceipt>(`/participation/public/v1/sites/${encodeURIComponent(site)}/events/${encodeURIComponent(event)}/registrations`, { method: 'POST', body, idempotencyKey }),
     getTicket: (id: string, token: string) => request<TicketResponse>(`/participation/self/v1/registrations/${encodeURIComponent(id)}/ticket`, { token }),
+    getCredential: (id: string, token: string) => request<HukidCredentialDelivery>(`/participation/self/v1/registrations/${encodeURIComponent(id)}/credential`, { token }),
   };
 }
