@@ -278,6 +278,8 @@ func (r *Router) routes() {
 	a.Post("/onsite/v1/attendance/facts/:id/voids", r.auth("onsite:void"), r.voidFact)
 	a.Get("/onsite/v1/attendance", r.auth("onsite:read"), r.list)
 	a.Get("/onsite/v1/dashboard", r.auth("onsite:read"), r.dashboard)
+	a.Get("/onsite/v1/events", r.auth("onsite:read"), r.events)
+	a.Get("/onsite/v1/events/:event_id/roster", r.auth("onsite:read"), r.roster)
 	r.registerScanRoutes(a)
 }
 
@@ -550,6 +552,30 @@ func (r *Router) dashboard(c fiber.Ctx) error {
 		return problem(c, 503, "persistence_unavailable", "no se pudo consultar dashboard")
 	}
 	return c.JSON(data)
+}
+
+func (r *Router) events(c fiber.Ctx) error {
+	items, err := r.DB.Events(c.Context(), claims(c).TenantID)
+	if err != nil {
+		return problem(c, 503, "persistence_unavailable", "no se pudieron consultar eventos")
+	}
+	return c.JSON(fiber.Map{"items": items})
+}
+
+func (r *Router) roster(c fiber.Ctx) error {
+	event := c.Params("event_id")
+	if event == "" {
+		return problem(c, 400, "invalid_event", "event_id es obligatorio")
+	}
+	if err := r.ensureAssignment(c, event, "main"); err != nil {
+		return err
+	}
+	scope := c.Query("scope", "main")
+	items, err := r.DB.Roster(c.Context(), event, scope, claims(c).TenantID)
+	if err != nil {
+		return problem(c, 503, "persistence_unavailable", "no se pudo consultar el padrón")
+	}
+	return c.JSON(fiber.Map{"items": items, "summary": fiber.Map{"confirmed": len(items)}})
 }
 
 var _ = fmt.Sprintf

@@ -13,8 +13,9 @@ type Tab = 'checkin' | 'attendance' | 'sessions' | 'devices' | 'certificates' | 
 type Ticket = { ticket_id: string; masked_holder: string; status: string; provisional?: boolean; verified?: boolean };
 type Dashboard = { registered: number; confirmed: number; present: number; attendance_rate: number };
 type AttendanceFact = { id: string; ticket_id: string; type: string; occurred_at: string; effective_status: string; reason?: string; compensates_fact_id?: string };
+type OperableEvent = { id: string; name: string; status: string; starts_at: string; ends_at: string };
+type RosterEntry = { registration_id: string; ticket_id: string; display_name: string; state: string; checked_in_at?: string | null; checked_out_at?: string | null };
 const tabByRoute: Record<string, Tab> = { '/onsite/attendance': 'attendance', '/onsite/sessions': 'sessions', '/onsite/devices': 'devices', '/onsite/certificates': 'certificates', '/onsite/reports': 'reports' };
-const eventIds: Record<string, string> = { demo: 'event-demo', fiis: 'event-fiis' };
 
 export function OnsiteModule({ context }: { context: ModuleContext }) {
   const { t } = useI18n();
@@ -23,15 +24,18 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
   const [loading, setLoading] = useState(false);
   const [searching, setSearching] = useState(false);
   const [cameraOpen, setCameraOpen] = useState(false);
-  const [event, setEvent] = useState('demo');
+  const [event, setEvent] = useState('');
+  const [events, setEvents] = useState<OperableEvent[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(true);
   const [code, setCode] = useState('');
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard>({ registered: 0, confirmed: 0, present: 0, attendance_rate: 0 });
   const [facts, setFacts] = useState<AttendanceFact[]>([]);
+  const [roster, setRoster] = useState<RosterEntry[]>([]);
   const [pendingToken, setPendingToken] = useState('');
   const [voiding, setVoiding] = useState<AttendanceFact | null>(null);
   const tab: Tab = tabByRoute[context.route ?? ''] || 'checkin';
-  const eventId = eventIds[event] || eventIds.demo;
+  const eventId = event;
   const operationsApiUrl = import.meta.env.VITE_OPERATIONS_API_URL || 'http://localhost:8083';
   // role sólo cambia los claims simulados del modo demo; con token real decide el backend.
   const authHeaders = (extra: Record<string, string> = {}, role: 'staff' | 'supervisor' | 'manager' = 'staff'): Record<string, string> => {
@@ -42,6 +46,7 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
   const api: OnsiteApi = { onsite: context.apiBaseUrl, operations: operationsApiUrl, eventId, headers: authHeaders };
 
   const loadDashboard = async () => {
+    if (!eventId) return;
     try {
       const response = await fetch(`${context.apiBaseUrl}/onsite/v1/dashboard?event_id=${encodeURIComponent(eventId)}`, { headers: authHeaders() });
       if (!response.ok) throw new Error();
@@ -49,14 +54,29 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
     } catch { setMessage(t('onsite.dashboardError')); }
   };
   const loadAttendance = async () => {
+    if (!eventId) return;
     try {
       const response = await fetch(`${context.apiBaseUrl}/onsite/v1/attendance?event_id=${encodeURIComponent(eventId)}&scope=main`, { headers: authHeaders() });
       if (!response.ok) throw new Error();
       const data = await response.json();
       setFacts(data.items || []);
+      const rosterResponse = await fetch(`${context.apiBaseUrl}/onsite/v1/events/${encodeURIComponent(eventId)}/roster?scope=main`, { headers: authHeaders() });
+      if (rosterResponse.ok) setRoster((await rosterResponse.json()).items || []);
     } catch { setMessage(t('onsite.apiError')); }
   };
-  useEffect(() => { if (tab === 'checkin') void loadDashboard(); }, [tab, eventId]);
+  const loadEvents = async () => {
+    setEventsLoading(true);
+    try {
+      const response = await fetch(`${context.apiBaseUrl}/onsite/v1/events`, { headers: authHeaders() });
+      if (!response.ok) throw new Error();
+      const items: OperableEvent[] = (await response.json()).items || [];
+      setEvents(items);
+      setEvent((current) => current && items.some((item) => item.id === current) ? current : (items[0]?.id || ''));
+    } catch { setMessage(t('onsite.apiError')); }
+    finally { setEventsLoading(false); }
+  };
+  useEffect(() => { void loadEvents(); }, []);
+  useEffect(() => { if (tab === 'checkin' && eventId) void loadDashboard(); }, [tab, eventId]);
   useEffect(() => { if (tab === 'attendance') void loadAttendance(); }, [tab, eventId]);
 
   const search = async (value = code) => {
@@ -125,19 +145,19 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
   const error = message.startsWith('No ') || message.startsWith('No se') || message.startsWith('API') || message.startsWith('Could not') || message.startsWith('La ') || message.startsWith('El ') || message.startsWith('Ya ') || message.startsWith('Ese ') || message.startsWith('Esta ') || message.startsWith('The ') || message.startsWith('This ');
 
   return <div className="nx-module-page">
-    <PageHeading title={tab === 'checkin' ? t('onsite.checkinTab') : tab === 'attendance' ? t('onsite.attendanceTab') : tab === 'sessions' ? tr('Sesiones') : tab === 'devices' ? tr('Dispositivos y turnos') : tab === 'certificates' ? tr('Certificados') : tr('Reportes')} description={tab === 'checkin' ? t('onsite.registerDescription') : tab === 'attendance' ? t('onsite.attendanceDescription') : tab === 'reports' || tab === 'certificates' ? t('onsite.reportsDescription') : undefined} action={<SelectMenu label={t('onsite.event')} value={event} onChange={setEvent} options={[{ value: 'demo', label: t('onsite.demo') }, { value: 'fiis', label: t('onsite.congress') }]} />} />
+    <PageHeading title={tab === 'checkin' ? t('onsite.checkinTab') : tab === 'attendance' ? t('onsite.attendanceTab') : tab === 'sessions' ? tr('Sesiones') : tab === 'devices' ? tr('Dispositivos y turnos') : tab === 'certificates' ? tr('Certificados') : tr('Reportes')} description={tab === 'checkin' ? t('onsite.registerDescription') : tab === 'attendance' ? t('onsite.attendanceDescription') : tab === 'reports' || tab === 'certificates' ? t('onsite.reportsDescription') : undefined} action={<SelectMenu label={t('onsite.event')} value={event} onChange={setEvent} options={events.map((item) => ({ value: item.id, label: item.name }))} />} />
     {tab === 'checkin' && <div className="nx-content-grid">
       <Card className="nx-scan-panel">
         <div className="nx-panel-heading"><div><p className="nx-eyebrow">{t('onsite.station')}</p><h2>{t('onsite.register')}</h2><p className="nx-muted">{t('onsite.registerDescription')}</p></div><Badge tone="success"><CheckCircle2 size={14} /> {t('onsite.ready')}</Badge></div>
         <div className="nx-scanner"><ScanLine size={42} /><strong>{t('onsite.scanner')}</strong><span>{t('onsite.scannerDescription')}</span></div>
-        <div className="nx-ticket-entry"><Input label={t('onsite.ticketCode')} help={t('onsite.ticketCodeHelp')} value={code} onChange={(event) => setCode(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void search(); }} placeholder="DEMO-2026-001" /><div className="nx-actions"><Button onClick={() => setCameraOpen(true)}><ScanLine size={16} />{t('onsite.openCamera')}</Button><Button variant="secondary" onClick={() => consumeQr(code)} loading={searching}>{t('onsite.scan')}</Button><Button variant="secondary" onClick={() => void search()} loading={searching}>{t('onsite.search')}</Button></div></div>
+        <div className="nx-ticket-entry"><Input disabled={eventsLoading || !eventId} label={t('onsite.ticketCode')} help={eventsLoading ? tr('Cargando eventos…') : t('onsite.ticketCodeHelp')} value={code} onChange={(event) => setCode(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void search(); }} placeholder="DEMO-2026-001" /><div className="nx-actions"><Button disabled={eventsLoading || !eventId} onClick={() => setCameraOpen(true)}><ScanLine size={16} />{t('onsite.openCamera')}</Button><Button disabled={eventsLoading || !eventId} variant="secondary" onClick={() => consumeQr(code)} loading={searching}>{t('onsite.scan')}</Button><Button disabled={eventsLoading || !eventId} variant="secondary" onClick={() => void search()} loading={searching}>{t('onsite.search')}</Button></div></div>
         {pendingToken && <Alert tone="warning"><ShieldCheck size={16} /> {tr('Acción de supervisión')} <Button variant="secondary" onClick={() => void resolveProvisional()} loading={loading}>{tr('Aceptar como provisional')}</Button></Alert>}
         {ticket && <div className="nx-ticket-result"><div><p className="nx-eyebrow">{t('onsite.searchSelect')}{ticket.verified ? ` · ${tr('QR verificado')}` : ''}</p><strong>{ticket.masked_holder} {ticket.provisional && <Badge tone="warning">{tr('Provisional')}</Badge>}</strong><span>{ticket.ticket_id} · {ticket.status === 'active' ? t('onsite.ticketReady') : t('onsite.ticketRejected')}</span></div><Button onClick={() => void checkin(ticket.ticket_id)} loading={loading}>{t('onsite.registerSelected')}</Button></div>}
         {message && <Alert tone={error ? 'danger' : 'success'}>{error ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />} {message}</Alert>}
       </Card>
       <Card className="nx-readiness"><div className="nx-panel-heading"><div><p className="nx-eyebrow">{t('onsite.attendanceTitle')}</p><h2>{t('onsite.attendanceSummary', { percentage: `${Math.round(dashboard.attendance_rate)}%` })}</h2></div></div><StatusLine label={t('onsite.registered')} value={String(dashboard.registered)} /><StatusLine label={t('onsite.confirmed')} value={String(dashboard.confirmed)} tone="success" /><StatusLine label={t('onsite.present')} value={String(dashboard.present)} tone="success" /></Card>
     </div>}
-    {tab === 'attendance' && <Card>{facts.length === 0 ? <EmptyState title={t('onsite.attendanceTab')} description={t('onsite.history')} action={<Button variant="secondary" onClick={() => navigate('/onsite')}>{t('onsite.registerEntry')}</Button>} /> : <div className="nx-history-list"><div className="nx-panel-heading"><div><p className="nx-eyebrow">{t('onsite.attendanceTitle')}</p><h2>{facts.length} {t('onsite.entries')}</h2></div><Button variant="secondary" onClick={() => void loadAttendance()}>Actualizar</Button></div>{facts.map((fact) => <div className="nx-history-row" key={fact.id}><div><strong>{fact.ticket_id}</strong><span>{fact.type} · {new Date(fact.occurred_at).toLocaleString()}{fact.reason ? ` · ${fact.reason}` : ''}</span></div><div className="nx-actions">{voided.has(fact.id) ? <Badge tone="danger">{tr('Anulado')}</Badge> : <Badge tone={fact.type === 'void' ? 'warning' : 'success'}>{fact.effective_status}</Badge>}
+    {tab === 'attendance' && <Card>{roster.length === 0 ? <EmptyState title={t('onsite.attendanceTab')} description={t('onsite.history')} action={<Button variant="secondary" onClick={() => navigate('/onsite')}>{t('onsite.registerEntry')}</Button>} /> : <div className="nx-history-list"><div className="nx-panel-heading"><div><p className="nx-eyebrow">{t('onsite.attendanceTitle')}</p><h2>{roster.length} {t('onsite.entries')}</h2></div><Button variant="secondary" onClick={() => void loadAttendance()}>Actualizar</Button></div>{roster.map((participant) => <div className="nx-history-row" key={participant.registration_id}><div><strong>{participant.display_name}</strong><span>{participant.ticket_id} · {participant.state}{participant.checked_in_at ? ` · ${new Date(participant.checked_in_at).toLocaleString()}` : ''}</span></div><div className="nx-actions"><Badge tone={participant.state === 'present' ? 'success' : 'warning'}>{participant.state}</Badge></div></div>)}<div className="nx-panel-heading"><div><p className="nx-eyebrow">{t('onsite.history')}</p><h2>{facts.length} {t('onsite.entries')}</h2></div></div>{facts.map((fact) => <div className="nx-history-row" key={fact.id}><div><strong>{fact.ticket_id}</strong><span>{fact.type} · {new Date(fact.occurred_at).toLocaleString()}{fact.reason ? ` · ${fact.reason}` : ''}</span></div><div className="nx-actions">{voided.has(fact.id) ? <Badge tone="danger">{tr('Anulado')}</Badge> : <Badge tone={fact.type === 'void' ? 'warning' : 'success'}>{fact.effective_status}</Badge>}
           {fact.type === 'check_in' && fact.effective_status === 'present' && !voided.has(fact.id) && <Button variant="ghost" onClick={() => void attendanceAction(`${context.apiBaseUrl}/onsite/v1/attendance/check-outs`, { ticket_id: fact.ticket_id, event_id: eventId, scope: 'main' }, 'staff', tr('Salida registrada.'))}><LogOut size={16} />{tr('Registrar salida')}</Button>}
           {fact.type !== 'void' && !voided.has(fact.id) && <Button variant="ghost" onClick={() => setVoiding(fact)}><Undo2 size={16} />{tr('Anular')}</Button>}
         </div></div>)}</div>}</Card>}
