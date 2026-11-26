@@ -121,6 +121,17 @@ paths:
       parameters: [{$ref: '#/components/parameters/EventId'}]
       responses:
         '200': {description: Métricas operativas, content: {application/json: {schema: {$ref: '#/components/schemas/Dashboard'}}}}
+  /onsite/v1/events:
+    get:
+      tags: [Onsite]
+      summary: Eventos operables del tenant activo
+      responses: {'200': {description: Catálogo de eventos, content: {application/json: {schema: {type: object, properties: {items: {type: array, items: {$ref: '#/components/schemas/OperableEvent'}}}}}}}}
+  /onsite/v1/events/{event_id}/roster:
+    get:
+      tags: [Onsite]
+      summary: Padrón confirmado y estado efectivo de asistencia
+      parameters: [{name: event_id, in: path, required: true, schema: {type: string}}, {$ref: '#/components/parameters/Scope'}]
+      responses: {'200': {description: Padrón operacional, content: {application/json: {schema: {$ref: '#/components/schemas/RosterPage'}}}}}
   /onsite/v1/scans:
     post:
       tags: [QR]
@@ -178,6 +189,8 @@ components:
     AttendanceFact: {type: object, required: [id, ticket_id, event_id, scope, type, occurred_at, effective_status], properties: {id: {type: string, format: uuid}, ticket_id: {type: string}, event_id: {type: string}, scope: {type: string}, type: {type: string, enum: [check_in, check_out, void]}, occurred_at: {type: string, format: date-time}, effective_status: {type: string}}}
     AttendancePage: {type: object, required: [items], properties: {items: {type: array, items: {$ref: '#/components/schemas/AttendanceFact'}}, next_cursor: {type: string, nullable: true}}}
     Dashboard: {type: object, required: [registered, confirmed, present, attendance_rate], properties: {registered: {type: integer}, confirmed: {type: integer}, present: {type: integer}, attendance_rate: {type: number, format: double}}}
+    OperableEvent: {type: object, required: [id, name, status, starts_at, ends_at], properties: {id: {type: string}, name: {type: string}, status: {type: string}, starts_at: {type: string, format: date-time}, ends_at: {type: string, format: date-time}, timezone: {type: string}, published_revision: {type: integer}}}
+    RosterPage: {type: object, required: [items, summary], properties: {items: {type: array, items: {type: object, required: [registration_id, ticket_id, display_name, state], properties: {registration_id: {type: string, format: uuid}, ticket_id: {type: string}, display_name: {type: string}, state: {type: string}, checked_in_at: {type: string, format: date-time, nullable: true}, checked_out_at: {type: string, format: date-time, nullable: true}}}}, summary: {type: object}}}
     Readiness: {type: object, required: [ready, event_id, scope, device_id], properties: {ready: {type: boolean}, event_id: {type: string}, scope: {type: string}, device_id: {type: string}}}
     VoidRequest: {type: object, required: [reason], properties: {reason: {type: string, minLength: 5, maxLength: 500, description: 'Menos de 5 caracteres responde 422 reason_required. Un registro sólo se anula una vez (409 already_voided); anular una salida devuelve la presencia.'}}}
     ScanRequest: {type: object, required: [token, event_id, scope], properties: {token: {type: string, description: 'JWS compacto EdDSA (Ed25519) emitido por Participation'}, event_id: {type: string, example: event-demo}, scope: {type: string, example: main}}}

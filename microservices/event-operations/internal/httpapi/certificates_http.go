@@ -55,6 +55,13 @@ func (s *Server) createEligibleCertificate(ctx context.Context, tenantID, eventI
 	if err != nil {
 		return nil, 503, "onsite_unavailable", "no se pudo leer la asistencia"
 	}
+	var endsAt time.Time
+	if err := s.DB.QueryRow(ctx, `SELECT ends_at FROM onsite_contract.events_v1 WHERE tenant_id=$1::uuid AND event_id=$2 AND (event_id=$2 OR participation_event_id=$2) LIMIT 1`, tenantID, eventID).Scan(&endsAt); err != nil {
+		return nil, 503, "onsite_unavailable", "no se pudo leer el cierre del evento"
+	}
+	if time.Now().UTC().Before(endsAt.UTC()) {
+		return nil, 422, "event_not_finished", "el evento todavía no ha finalizado"
+	}
 	id := uuid.New()
 	code := "NX-" + strings.ToUpper(id.String()[:8])
 	sum := sha256.Sum256([]byte("nexo:certificate-evidence:v1|" + tenantID + "|" + eventID + "|" + registrationID + "|" + firstFact + "|" + eligibilityRule + "|" + code))
@@ -133,7 +140,7 @@ func (s *Server) eligibleRegistrations(c fiber.Ctx) error {
 	rows, err := s.DB.Query(c.Context(), `SELECT r.registration_id::text,r.full_name,r.ticket_id,MIN(a.occurred_at),
 		(SELECT x.id::text FROM certificates.certificates x WHERE x.tenant_id=$1::uuid AND x.event_id=$2 AND x.registration_id=r.registration_id::text AND x.state NOT IN ('revoked','replaced','cancelled','failed') LIMIT 1)
 		FROM participation_contract.registrations_v1 r
-		JOIN onsite_contract.events_v1 e ON e.tenant_id=$1::uuid AND e.event_id=$2 AND (e.participation_event_id=r.event_id OR e.event_id=r.event_id)
+		JOIN onsite_contract.events_v1 e ON e.tenant_id=$1::uuid AND e.event_id=$2 AND e.ends_at <= now() AND (e.participation_event_id=r.event_id OR e.event_id=r.event_id)
 		JOIN onsite_contract.attendance_v1 a ON a.tenant_id=$1::uuid AND a.event_id=$2 AND a.ticket_id=r.ticket_id AND a.type='check_in' AND NOT a.voided
 		GROUP BY r.registration_id,r.full_name,r.ticket_id ORDER BY r.full_name`, tenant(c), event)
 	if err != nil {

@@ -71,6 +71,17 @@ services:
       HUKID_CLAIMS_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
       NEXO_INTERNAL_SERVICE_TOKEN: nexo-local-service-only
       NEXO_PUBLIC_BASE_URL: http://localhost:8083
+      # HukID real/sandbox: si están vacías se usa integration.hukid_configs.
+      HUKID_BASE_URL: ${HUKID_BASE_URL:-}
+      HUKID_OAUTH_URL: ${HUKID_OAUTH_URL:-}
+      HUKID_ISSUER_ID: ${HUKID_ISSUER_ID:-}
+      HUKID_CREDENTIAL_DEFINITION: ${HUKID_CREDENTIAL_DEFINITION:-}
+      HUKID_PARTICIPATION_CREDENTIAL_DEFINITION: ${HUKID_PARTICIPATION_CREDENTIAL_DEFINITION:-}
+      HUKID_CLIENT_ID: ${HUKID_CLIENT_ID:-}
+      HUKID_CLIENT_SECRET: ${HUKID_CLIENT_SECRET:-}
+      HUKID_CA_CERT_FILE: ${HUKID_CA_CERT_FILE:-}
+      HUKID_CLIENT_CERT_FILE: ${HUKID_CLIENT_CERT_FILE:-}
+      HUKID_CLIENT_KEY_FILE: ${HUKID_CLIENT_KEY_FILE:-}
     ports: ["8083:8083"]
   event-configuration-api:
     build: ./microservices/event-configuration

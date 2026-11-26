@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -118,6 +119,7 @@ func (s *Server) register(c fiber.Ctx) error {
 	if json.Unmarshal(c.Body(), &in) != nil || in.FormVersionID == "" || in.ConsentVersion == "" || !in.ConsentAccepted || in.Attendee.FullName == "" || in.Attendee.Email == "" {
 		return problem(c, 400, "invalid_registration", "datos de registro incompletos")
 	}
+	emailNormalized := strings.ToLower(strings.TrimSpace(in.Attendee.Email))
 	rawHash := sha256.Sum256(c.Body())
 	hash := base64.RawURLEncoding.EncodeToString(rawHash[:])
 	var existing string
@@ -190,14 +192,15 @@ func (s *Server) register(c fiber.Ctx) error {
 		j := makeTicket(v, eventID, c.Params("site"), c.Params("event"))
 		ticketJWS = &j
 	}
-	_, err = tx.Exec(c.Context(), `INSERT INTO participation.registrations(id,form_id,state,full_name,email,institution,answers,self_access_token_ciphertext,self_access_token_hash,ticket_id,ticket_jws,ticket_state,idempotency_key,request_hash,waitlist_position) VALUES($1,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`, id, formID, state, in.Attendee.FullName, strings.ToLower(strings.TrimSpace(in.Attendee.Email)), in.Attendee.Institution, in.Answers, encryptedToken, tokenHash, ticketID, ticketJWS, func() string {
+	participantFingerprint := fingerprint(in.Attendee.FullName, in.Attendee.Institution, emailNormalized)
+	_, err = tx.Exec(c.Context(), `INSERT INTO participation.registrations(id,form_id,state,full_name,email,email_normalized,participant_fingerprint,institution,answers,self_access_token_ciphertext,self_access_token_hash,ticket_id,ticket_jws,ticket_state,idempotency_key,request_hash,waitlist_position) VALUES($1,$2::uuid,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`, id, formID, state, in.Attendee.FullName, emailNormalized, emailNormalized, participantFingerprint, in.Attendee.Institution, in.Answers, encryptedToken, tokenHash, ticketID, ticketJWS, func() string {
 		if state == "confirmed" {
 			return "active"
 		}
 		return ""
 	}(), key, hash, pos)
 	if err != nil {
-		if strings.Contains(err.Error(), "registrations_form_id_email_key") {
+		if strings.Contains(err.Error(), "registrations_unique_email_per_form") || strings.Contains(err.Error(), "registrations_form_id_email_key") {
 			return problem(c, 409, "already_registered", "el correo ya está registrado")
 		}
 		return problem(c, 503, "persistence_unavailable", "no se pudo guardar el registro")
@@ -211,6 +214,12 @@ func (s *Server) register(c fiber.Ctx) error {
 		_, _ = s.DB.Exec(c.Context(), `UPDATE participation.registrations SET hukid_state=$2 WHERE id=$1::uuid`, id, hukidState)
 	}
 	return receipt(c, id.String(), eventID, state, pos, ticketID, token, hukidState)
+}
+
+func fingerprint(fullName, institution, email string) string {
+	value := strings.Join([]string{strings.ToLower(strings.Join(strings.Fields(fullName), " ")), strings.ToLower(strings.Join(strings.Fields(institution), " ")), email}, "|")
+	sum := sha256.Sum256([]byte(value))
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *Server) requestHukID(ctx context.Context, tenantID, eventID, registrationID, ticketID string) string {

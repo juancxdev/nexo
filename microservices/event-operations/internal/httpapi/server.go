@@ -111,6 +111,23 @@ func tenant(c fiber.Ctx) string {
 	}
 	return v
 }
+
+func hukidDefinition(defaultValue string, participation bool) string {
+	if participation {
+		if value := strings.TrimSpace(os.Getenv("HUKID_PARTICIPATION_CREDENTIAL_DEFINITION")); value != "" {
+			return value
+		}
+	} else if value := strings.TrimSpace(os.Getenv("HUKID_CREDENTIAL_DEFINITION")); value != "" {
+		return value
+	}
+	return defaultValue
+}
+func hukidIssuer(defaultValue string) string {
+	if value := strings.TrimSpace(os.Getenv("HUKID_ISSUER_ID")); value != "" {
+		return value
+	}
+	return defaultValue
+}
 func actor(c fiber.Ctx) string {
 	if v, ok := c.Locals("actor_id").(string); ok && v != "" {
 		return v
@@ -354,6 +371,8 @@ func (s *Server) createDelivery(c fiber.Ctx) error {
 	if err != nil {
 		return problem(c, 409, "hukid_not_configured", "no existe configuración HukID")
 	}
+	issuer = hukidIssuer(issuer)
+	definition = hukidDefinition(definition, false)
 	claims := map[string]any{
 		"certificate": map[string]any{"id": cert, "verificationCode": code, "issuedAt": time.Now().UTC().Format(time.RFC3339), "verificationUrl": publicVerificationURL(code), "evidenceDigest": evidence},
 		"recipient":   map[string]any{"registrationId": registrationID, "displayName": displayName},
@@ -415,6 +434,8 @@ func (s *Server) createParticipationDelivery(c fiber.Ctx) error {
 	if err := s.DB.QueryRow(c.Context(), `SELECT id,issuer_id,COALESCE(NULLIF(participation_credential_definition,''),credential_definition) FROM integration.hukid_configs WHERE tenant_id=$1::uuid AND status='active' LIMIT 1`, tenant(c)).Scan(&config, &issuer, &definition); err != nil {
 		return problem(c, 409, "hukid_not_configured", "no existe una definición HukID para boletos")
 	}
+	issuer = hukidIssuer(issuer)
+	definition = hukidDefinition(definition, true)
 	claims := map[string]any{"ticket": map[string]any{"id": in.TicketID, "eventId": in.EventID, "registrationId": in.RegistrationID}}
 	payload := map[string]any{"issuerId": issuer, "credentialDefinition": definition, "claims": claims, "delivery": map[string]any{"flow": "pre-authorized_code", "expiresInSeconds": 300, "txCodeRequired": false}, "source": map[string]any{"system": "nexo", "reference": in.TicketID}}
 	raw, _ := json.Marshal(payload)
@@ -440,12 +461,12 @@ func (s *Server) createParticipationDelivery(c fiber.Ctx) error {
 }
 
 func (s *Server) getParticipationDelivery(c fiber.Ctx) error {
-	var id, state, offer, credential string
-	err := s.DB.QueryRow(c.Context(), `SELECT id::text,state,COALESCE(credential_offer_uri,''),COALESCE(credential_id,'') FROM integration.hukid_deliveries WHERE tenant_id=$1::uuid AND credential_type='participation_ticket' AND registration_id=$2 LIMIT 1`, tenant(c), c.Params("registration_id")).Scan(&id, &state, &offer, &credential)
+	var id, state, offer, credential, lastError string
+	err := s.DB.QueryRow(c.Context(), `SELECT id::text,state,COALESCE(credential_offer_uri,''),COALESCE(credential_id,''),COALESCE(last_error_code,'') FROM integration.hukid_deliveries WHERE tenant_id=$1::uuid AND credential_type='participation_ticket' AND registration_id=$2 LIMIT 1`, tenant(c), c.Params("registration_id")).Scan(&id, &state, &offer, &credential, &lastError)
 	if err != nil {
 		return problem(c, 404, "credential_delivery_not_found", "entrega HukID no encontrada")
 	}
-	return c.JSON(fiber.Map{"id": id, "credential_type": "participation_ticket", "state": state, "credential_offer_uri": offer, "credential_id": credential})
+	return c.JSON(fiber.Map{"id": id, "credential_type": "participation_ticket", "state": state, "credential_offer_uri": offer, "credential_id": credential, "last_error_code": lastError})
 }
 
 func (s *Server) getDelivery(c fiber.Ctx) error {
