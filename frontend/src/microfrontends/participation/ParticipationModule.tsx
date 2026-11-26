@@ -70,7 +70,13 @@ export function ParticipationModule({ context }: { context: ModuleContext }) {
   if (receipt) return <ParticipationReceipt receipt={receipt} ticket={ticket} credential={credential} />;
 
   const isOpen = form?.binding_state === 'open';
-  const answerProperties = Object.entries(form?.schema?.properties || {}).filter(([name]) => !['full_name', 'email', 'institution'].includes(name));
+  const answerProperties = Object.entries(form?.schema?.properties || {}).filter(([name]) => {
+    const normalized = name.trim().toLowerCase();
+    // These identity fields are rendered once by the canonical form. Some
+    // event schemas also declare email under a translated/custom key; showing
+    // it again caused the browser to submit a second, contradictory email.
+    return !['full_name', 'email', 'institution'].includes(normalized) && !normalized.includes('email');
+  });
   return <div className="nx-participation-page">
     <PageHeading eyebrow={t('participation.eyebrow')} title={form?.event_title || t('participation.title')} description={t('participation.description')} />
     <div className="nx-participation-grid">

@@ -35,7 +35,7 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
   const [voiding, setVoiding] = useState<AttendanceFact | null>(null);
   const tab: Tab = tabByRoute[context.route ?? ''] || 'checkin';
   const eventId = event;
-  const operationsApiUrl = import.meta.env.VITE_OPERATIONS_API_URL || 'http://localhost:8083';
+  const operationsApiUrl = import.meta.env.VITE_OPERATIONS_API_URL || (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' ? 'http://localhost:8083' : 'https://api-nexo.fiis-unas.space');
   // role sólo cambia los claims simulados del modo demo; con token real decide el backend.
   const authHeaders = (extra: Record<string, string> = {}, role: 'staff' | 'supervisor' | 'manager' = 'staff'): Record<string, string> => {
     const session = readSession();

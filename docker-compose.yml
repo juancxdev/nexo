@@ -19,7 +19,7 @@ services:
       DATABASE_URL: postgres://core_app:core-app-local-only@postgres:5432/nexo?sslmode=disable
       NEXO_JWT_ISSUER: http://core-api:8081
       NEXO_JWT_AUDIENCE: nexo-services
-      CORS_ALLOWED_ORIGINS: http://localhost:5174,http://127.0.0.1:5174
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://nexo.fiis-unas.space,http://localhost:5174,http://127.0.0.1:5174}
       NEXO_JWT_PRIVATE_KEY_PATH: /var/lib/nexo/keys/jwt-rsa.pem
       NEXO_JWT_KEY_RING_DIR: /var/lib/nexo/keys
       # Development-only secret. Production injects it through its secret manager.
@@ -38,7 +38,7 @@ services:
       CORE_JWKS_URL: http://core-api:8081/.well-known/jwks.json
       NEXO_JWT_ISSUER: http://core-api:8081
       NEXO_JWT_AUDIENCE: nexo-services
-      CORS_ALLOWED_ORIGINS: http://localhost:5174,http://127.0.0.1:5174
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://nexo.fiis-unas.space,http://localhost:5174,http://127.0.0.1:5174}
     ports: ["8082:8082"]
   participation-api:
     build: ./microservices/participation
@@ -47,7 +47,7 @@ services:
       APP_ENV: development
       DATABASE_URL: postgres://participation_app:participation-app-local-only@postgres:5432/nexo?sslmode=disable
       PARTICIPATION_ADDR: :8084
-      CORS_ALLOWED_ORIGINS: http://localhost:5174,http://127.0.0.1:5174
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://nexo.fiis-unas.space,http://localhost:5174,http://127.0.0.1:5174}
       EVENT_OPERATIONS_URL: http://event-operations-api:8083
       NEXO_INTERNAL_SERVICE_TOKEN: nexo-local-service-only
     ports: ["8084:8084"]
@@ -66,11 +66,11 @@ services:
       CORE_JWKS_URL: http://core-api:8081/.well-known/jwks.json
       NEXO_JWT_ISSUER: http://core-api:8081
       NEXO_JWT_AUDIENCE: nexo-services
-      CORS_ALLOWED_ORIGINS: http://localhost:5174,http://127.0.0.1:5174
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://nexo.fiis-unas.space,http://localhost:5174,http://127.0.0.1:5174}
       # Development-only AES-256 key. Production injects it through a secret manager.
       HUKID_CLAIMS_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
       NEXO_INTERNAL_SERVICE_TOKEN: nexo-local-service-only
-      NEXO_PUBLIC_BASE_URL: http://localhost:8083
+      NEXO_PUBLIC_BASE_URL: ${NEXO_PUBLIC_BASE_URL:-https://nexo.fiis-unas.space}
       # HukID real/sandbox: si están vacías se usa integration.hukid_configs.
       HUKID_BASE_URL: ${HUKID_BASE_URL:-}
       HUKID_OAUTH_URL: ${HUKID_OAUTH_URL:-}
@@ -98,6 +98,7 @@ services:
       CORE_JWKS_URL: http://core-api:8081/.well-known/jwks.json
       NEXO_JWT_ISSUER: http://core-api:8081
       NEXO_JWT_AUDIENCE: nexo-services
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://nexo.fiis-unas.space,http://localhost:5174,http://127.0.0.1:5174}
       MEMBERSHIP_MODE: mock
       BROKER_MODE: simulator
     ports: ["${EVENT_CONFIGURATION_PORT:-3000}:3000"]
@@ -144,6 +145,8 @@ services:
     ports: ["1025:1025", "8025:8025"]
   hukid-simulator:
     build: ./tools/hukid-simulator
+    environment:
+      HUKID_PUBLIC_BASE_URL: ${HUKID_PUBLIC_BASE_URL:-https://api-hukid.fiis-unas.space}
     ports: ["8090:8090"]
 
 volumes:

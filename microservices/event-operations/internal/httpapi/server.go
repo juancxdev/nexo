@@ -380,6 +380,8 @@ func (s *Server) createDelivery(c fiber.Ctx) error {
 		"eventDate":         time.Now().UTC().Format("2006-01-02"),
 		"participationRole": "attendee",
 		"certificateNumber": code,
+		"recipient":         map[string]any{"registrationId": registrationID},
+		"event":              map[string]any{"id": eventID},
 	}
 	// HukID v0 del contrato canónico no soporta tx_code; el consentimiento
 	// explícito se registra en Nexo antes de crear esta solicitud.
@@ -440,7 +442,30 @@ func (s *Server) createParticipationDelivery(c fiber.Ctx) error {
 	}
 	issuer = hukidIssuer(issuer)
 	definition = hukidDefinition(definition, true)
-	claims := map[string]any{"ticket": map[string]any{"id": in.TicketID, "eventId": in.EventID, "registrationId": in.RegistrationID}}
+	var participantName, eventTitle string
+	var eventDate time.Time
+	if err := s.DB.QueryRow(c.Context(), `
+		SELECT r.full_name, COALESCE(e.name, 'Evento'), COALESCE(e.starts_at, now())
+		FROM participation_contract.registrations_v1 r
+		LEFT JOIN onsite_contract.events_v1 e ON e.tenant_id=$4::uuid
+			AND (e.event_id=r.event_id OR e.participation_event_id=r.event_id)
+		WHERE r.registration_id::text=$1 AND r.event_id=$2 AND r.ticket_id=$3
+		LIMIT 1`, in.RegistrationID, in.EventID, in.TicketID, tenant(c)).Scan(&participantName, &eventTitle, &eventDate); err != nil {
+		return problem(c, 422, "registration_not_found", "no se encontraron los datos confirmados de la inscripción")
+	}
+	// HukID emite el VC con el contrato canónico usado por la wallet y por el
+	// endpoint de pases. El ticket sigue siendo una referencia útil, pero los
+	// campos que habilitan el pase deben vivir en recipient/event.
+	claims := map[string]any{
+		"participantName":   participantName,
+		"eventTitle":        eventTitle,
+		"organizerName":     "IncubaUNAS",
+		"eventDate":         eventDate.UTC().Format(time.RFC3339),
+		"participationRole": "Participante",
+		"certificateNumber": in.TicketID,
+		"recipient":         map[string]any{"registrationId": in.RegistrationID},
+		"event":             map[string]any{"id": in.EventID},
+	}
 	payload := map[string]any{"issuerId": issuer, "credentialDefinition": definition, "claims": claims, "delivery": map[string]any{"flow": "pre-authorized_code", "expiresInSeconds": 300, "txCodeRequired": false}, "source": map[string]any{"system": "nexo", "reference": in.TicketID}}
 	raw, _ := json.Marshal(payload)
 	digest := sha256.Sum256(raw)

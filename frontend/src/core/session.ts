@@ -2,7 +2,7 @@ export type Tenant = {id:string;name:string;slug:string;created_at:string};
 export type Profile = {id:string;name:string;email:string};
 export type Session = {access_token:string;refresh_token:string;expires_at:number;profile:Profile;tenants:Tenant[]};
 const key='nexo.session';
-export const coreApiUrl=import.meta.env.VITE_CORE_API_URL||'http://localhost:8081';
+export const coreApiUrl=import.meta.env.VITE_CORE_API_URL||(window.location.hostname==='localhost'||window.location.hostname==='127.0.0.1'?'http://localhost:8081':'https://api-nexo.fiis-unas.space/core');
 export function readSession():Session|null{try{const raw=sessionStorage.getItem(key);return raw?JSON.parse(raw) as Session:null}catch{return null}}
 export function saveSession(session:Session){sessionStorage.setItem(key,JSON.stringify(session))}
 export function clearSession(){sessionStorage.removeItem(key)}

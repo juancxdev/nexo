@@ -321,7 +321,7 @@ func (s *server) expireVerification(c fiber.Ctx) error {
 	return c.JSON(v)
 }
 func (s *server) create(c fiber.Ctx) error {
-	key := c.Get("Idempotency-Key")
+	key := strings.Clone(c.Get("Idempotency-Key"))
 	if len(key) < 16 {
 		return problem(c, 400, "invalid_idempotency_key", "Idempotency-Key es obligatorio")
 	}
@@ -335,13 +335,14 @@ func (s *server) create(c fiber.Ctx) error {
 		return problem(c, f.Status, "simulated_failure", "fallo configurado para pruebas")
 	}
 	for _, v := range s.requests {
-		if v.IdempotencyKey == key {
-			if v.RequestHash != hash {
-				return problem(c, 409, "idempotency_key_reused", "la clave fue usada con otro payload")
-			}
-			c.Status(200)
-			return c.JSON(v)
+		if v.IdempotencyKey != key {
+			continue
 		}
+		if v.RequestHash != hash {
+			return problem(c, 409, "idempotency_key_reused", "la clave fue usada con otro payload")
+		}
+		c.Status(200)
+		return c.JSON(v)
 	}
 	var in struct {
 		IssuerID             string         `json:"issuerId"`
