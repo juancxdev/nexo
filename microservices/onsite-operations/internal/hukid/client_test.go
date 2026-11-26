@@ -10,6 +10,40 @@ import (
 	"testing"
 )
 
+func TestClientRedeemsCheckinPass(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/oauth2/token":
+			if err := r.ParseForm(); err != nil || r.Form.Get("scope") != "pass:verify" {
+				t.Fatalf("invalid token form: %v", err)
+			}
+			if r.Form.Get("client_id") != "door-client" || r.Form.Get("client_secret") != "door-secret" {
+				t.Fatal("missing client credentials")
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "pass-token", "token_type": "Bearer"})
+		case "/v1/pass-verifications":
+			if r.Header.Get("Authorization") != "Bearer pass-token" {
+				t.Fatal("missing pass bearer")
+			}
+			var body map[string]string
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body["code"] != "opaque-code" || body["eventId"] != "event-1" {
+				t.Fatalf("invalid pass body: %+v", body)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{"result": "pass", "registrationId": "reg-1", "eventId": "event-1", "credentialId": "vc-1"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client := &Client{BaseURL: server.URL + "/v1", OAuthURL: server.URL + "/oauth2/token", ClientID: "door-client", ClientSecret: "door-secret", HTTP: server.Client()}
+	result, err := client.VerifyPass(context.Background(), "opaque-code", "event-1")
+	if err != nil || result.Result != "pass" || result.RegistrationID != "reg-1" {
+		t.Fatalf("verify pass: %+v %v", result, err)
+	}
+}
+
 func TestClientStartsAndReadsVerificationSession(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer operator-token" {

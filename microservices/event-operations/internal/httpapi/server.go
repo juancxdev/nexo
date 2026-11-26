@@ -381,7 +381,7 @@ func (s *Server) createDelivery(c fiber.Ctx) error {
 		"participationRole": "attendee",
 		"certificateNumber": code,
 		"recipient":         map[string]any{"registrationId": registrationID},
-		"event":              map[string]any{"id": eventID},
+		"event":             map[string]any{"id": eventID},
 	}
 	// HukID v0 del contrato canónico no soporta tx_code; el consentimiento
 	// explícito se registra en Nexo antes de crear esta solicitud.
@@ -466,7 +466,10 @@ func (s *Server) createParticipationDelivery(c fiber.Ctx) error {
 		"recipient":         map[string]any{"registrationId": in.RegistrationID},
 		"event":             map[string]any{"id": in.EventID},
 	}
-	payload := map[string]any{"issuerId": issuer, "credentialDefinition": definition, "claims": claims, "delivery": map[string]any{"flow": "pre-authorized_code", "expiresInSeconds": 300, "txCodeRequired": false}, "source": map[string]any{"system": "nexo", "reference": in.TicketID}}
+	// La credencial de participación debe quedar vinculada a la wallet mediante
+	// el proof JWT OID4VCI. Si HukID la emite inmediatamente, queda anónima y
+	// luego no puede generar el pase presencial para el check-in.
+	payload := map[string]any{"issuerId": issuer, "credentialDefinition": definition, "claims": claims, "delivery": map[string]any{"flow": "pre-authorized_code", "expiresInSeconds": 300, "txCodeRequired": false, "deferred": true}, "source": map[string]any{"system": "nexo", "reference": in.TicketID}}
 	raw, _ := json.Marshal(payload)
 	digest := sha256.Sum256(raw)
 	ciphertext, nonce, keyVersion, err := secureclaims.Encrypt(raw)

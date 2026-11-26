@@ -112,6 +112,17 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
       }
     } catch { setMessage(t('onsite.apiError')); } finally { setSearching(false); }
   };
+  const verifyHukIDPass = async (code: string) => {
+    setSearching(true); setMessage(''); setTicket(null); setPendingToken('');
+    try {
+      const response = await fetch(`${context.apiBaseUrl}/onsite/v1/hukid-passes/verifications`, { method: 'POST', headers: authHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify({ code, event_id: eventId, scope: 'main' }) });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { setMessage(onsiteReason(data.code || 'ticket_invalid')); return; }
+      if (!data.accepted) { setMessage(`No apto: ${onsiteReason(data.reason)}`); return; }
+      setTicket({ ticket_id: data.ticket.ticket_id, masked_holder: data.ticket.masked_holder, status: 'active', provisional: false, verified: true });
+      setCode(data.ticket.ticket_id);
+    } catch { setMessage(t('onsite.apiError')); } finally { setSearching(false); }
+  };
   const resolveProvisional = async () => {
     setLoading(true);
     try {
@@ -127,6 +138,11 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
     const match = compact.match(/^nexo:ticket:(.+)$/i);
     setCameraOpen(false);
     if (match) { setCode(match[1]); void search(match[1]); return; }
+    try {
+      const pass = new URL(compact);
+      const passCode = pass.protocol === 'hukid-pass:' && pass.hostname === 'v1' ? pass.searchParams.get('code') : null;
+      if (passCode) { void verifyHukIDPass(passCode); return; }
+    } catch { /* El resto de formatos se valida abajo. */ }
     if (compact.split('.').length === 3) { void verifyQr(compact); return; }
     setMessage(t('onsite.qrInvalid'));
   };

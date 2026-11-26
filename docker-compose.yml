@@ -20,6 +20,10 @@ services:
       NEXO_JWT_ISSUER: http://core-api:8081
       NEXO_JWT_AUDIENCE: nexo-services
       CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:-https://nexo.fiis-unas.space,http://localhost:5174,http://127.0.0.1:5174}
+      HUKID_PASS_BASE_URL: ${HUKID_PASS_BASE_URL:-http://hukid-node:8080/v1}
+      HUKID_PASS_OAUTH_URL: ${HUKID_PASS_OAUTH_URL:-http://hukid-node:8080/oauth2/token}
+      HUKID_PASS_CLIENT_ID: ${HUKID_PASS_CLIENT_ID:-33333333-3333-4333-8333-333333333333}
+      HUKID_PASS_CLIENT_SECRET: ${HUKID_PASS_CLIENT_SECRET:-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa}
       NEXO_JWT_PRIVATE_KEY_PATH: /var/lib/nexo/keys/jwt-rsa.pem
       NEXO_JWT_KEY_RING_DIR: /var/lib/nexo/keys
       # Development-only secret. Production injects it through its secret manager.
