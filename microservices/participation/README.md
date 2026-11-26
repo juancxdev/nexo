@@ -48,3 +48,39 @@ Los cambios de allowlist, redes confiables y límites se aplican al reiniciar el
 ### Limitaciones de despliegue
 
 Los contadores de rate limit y los IDs de challenges consumidos son locales al proceso. Para la protección PA-040 completa, ejecutar una sola réplica. Con varias réplicas, fijar afinidad de cliente y configurar el mismo `PARTICIPATION_CHALLENGE_SECRET` no resuelve el replay entre instancias ni comparte los límites: se requiere un almacén compartido con consumo atómico y rate limiting distribuido. Esta implementación no modifica ni utiliza la base compartida para ese estado. Si `X-Forwarded-For` llega desde un proxy no incluido en `PARTICIPATION_TRUSTED_PROXY_CIDRS`, se ignora y se limita por la IP del proxy.
+
+## Cancelación, waitlist y rendimiento PA-041
+
+### Cancelación self-service y promoción de lista de espera
+
+- `POST /participation/self/v1/registrations/{id}/cancel` exige `Authorization: Bearer <self_access_token>` asociado al registro (responde `401` sin token y `404` si el token no corresponde al registro).
+- Es idempotente: cancelar un registro ya `cancelled` devuelve `200` sin alterar cupos ni lista de espera.
+- En una única transacción PostgreSQL con bloqueo `FOR UPDATE` sobre `participation.forms` seguido de `participation.registrations`:
+  - Marca el registro como `cancelled` y revoca su ticket (`ticket_state = 'revoked'`).
+  - Si estaba `confirmed` y existe un participante en `waitlisted`, promueve al de menor `waitlist_position` a `confirmed` con un nuevo `ticket_id` y JWS Ed25519 activo.
+  - Si no hay lista de espera, libera el cupo (`remaining + 1`, `confirmed_count - 1`).
+
+### Configuración del pool de PostgreSQL (`pgxpool`)
+
+Variables opcionales en `cmd/api/main.go` (si no se definen, aplican los defaults de `pgxpool`):
+
+| Variable | Uso |
+| --- | --- |
+| `PARTICIPATION_DB_MAX_CONNS` | Máximo de conexiones abiertas en el pool. |
+| `PARTICIPATION_DB_MIN_CONNS` | Mínimo de conexiones inactivas mantenidas. |
+| `PARTICIPATION_DB_MAX_CONN_LIFETIME` | Tiempo máximo de vida de una conexión (duración Go). |
+| `PARTICIPATION_DB_MAX_CONN_IDLE_TIME` | Tiempo máximo de inactividad antes de cerrar la conexión. |
+
+### Pruebas de concurrencia y perfil de carga 3×
+
+Las pruebas de integración y carga viven en `internal/httpapi/load_integration_test.go` y se activan sólo cuando `PARTICIPATION_TEST_DATABASE_URL` apunta a un PostgreSQL aislado (no afectan `go test ./...` en CI sin base de datos).
+
+- **Supuesto de pico base**: al no existir un valor histórico de tráfico productivo en el repositorio, se define como pico base de ensayo **100 operaciones**; el perfil **3×** ejecuta **300 operaciones mixtas** (registro, waitlist y cancelación) con **60 goroutines concurrentes** sobre un evento de capacidad `60` y `30` registros pre-sembrados.
+- **Resultados medidos sobre `postgres:16-alpine` aislado** (`0` fallos, `0` sobrecupos, `60` tickets activos únicos):
+
+| Pool (`MaxConns`) | Throughput | `p50` | `p95` | `p99` | `acquire_duration` acumulado |
+| --- | --- | --- | --- | --- | --- |
+| Default (`12`) | `221.36 req/s` | `246.444ms` | `346.178ms` | `383.152ms` | `59.013s` (`empty_acquire=599`) |
+| Ajustado (`20`) | `231.36 req/s` | `241.837ms` | `304.034ms` | `345.891ms` | `45.775s` (`empty_acquire=600`) |
+
+Para reproducir en un contenedor aislado sin tocar la base compartida, iniciar `postgres:16-alpine`, aplicar `migrations/000001_participation.up.sql` a `000003_hukid_credentials.up.sql` y ejecutar `go test -v ./...` con `PARTICIPATION_TEST_DATABASE_URL`.

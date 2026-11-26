@@ -89,6 +89,7 @@ func (s *Server) routes() {
 	a.Get("/participation/internal/v1/security/metrics", s.securityMetrics)
 	a.Get("/participation/self/v1/registrations/:id/ticket", s.ticket)
 	a.Get("/participation/self/v1/registrations/:id/credential", s.credential)
+	a.Post("/participation/self/v1/registrations/:id/cancel", s.cancelRegistration)
 }
 
 func (s *Server) protectPublic(requireChallenge bool, next fiber.Handler) fiber.Handler {
@@ -274,6 +275,17 @@ func (s *Server) register(c fiber.Ctx) error {
 	if err != nil {
 		return problem(c, 404, "form_not_found", "formulario no encontrado")
 	}
+	err = tx.QueryRow(c.Context(), `SELECT id::text,request_hash,state,waitlist_position,ticket_id,self_access_token_ciphertext,hukid_state FROM participation.registrations WHERE form_id=$1::uuid AND idempotency_key=$2`, formID, key).Scan(&existing, &existingHash, &existingState, &wait, &ticket, &encryptedToken, &existingHukidState)
+	if err == nil {
+		if existingHash != hash {
+			return problem(c, 409, "idempotency_key_reused", "el Idempotency-Key ya fue usado con otro payload")
+		}
+		token, _ = unprotectToken(encryptedToken)
+		return receipt(c, existing, eventID, existingState, wait, ticket, token, existingHukidState)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return problem(c, 503, "persistence_unavailable", "no se pudo verificar la idempotencia del registro")
+	}
 	if binding != "open" {
 		return problem(c, 409, "registration_closed", "el registro no está abierto")
 	}
@@ -420,6 +432,75 @@ func (s *Server) credential(c fiber.Ctx) error {
 		return problem(c, 503, "hukid_invalid_response", "respuesta HukID inválida")
 	}
 	return c.JSON(payload)
+}
+
+func (s *Server) cancelRegistration(c fiber.Ctx) error {
+	auth := strings.TrimSpace(strings.TrimPrefix(c.Get("Authorization"), "Bearer "))
+	if auth == "" || !strings.HasPrefix(c.Get("Authorization"), "Bearer ") {
+		return problem(c, 401, "unauthorized", "token de acceso requerido")
+	}
+	regID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return problem(c, 404, "registration_not_found", "registro no encontrado")
+	}
+	tokenHash := hashString(auth)
+
+	var formID, storedHash string
+	err = s.DB.QueryRow(c.Context(), `SELECT form_id::text, self_access_token_hash FROM participation.registrations WHERE id=$1::uuid`, regID).Scan(&formID, &storedHash)
+	if err != nil || storedHash != tokenHash {
+		return problem(c, 404, "registration_not_found", "registro no encontrado")
+	}
+
+	tx, err := s.DB.Begin(c.Context())
+	if err != nil {
+		return problem(c, 503, "persistence_unavailable", "no se pudo iniciar la cancelación")
+	}
+	defer tx.Rollback(c.Context())
+
+	var eventID, siteSlug, eventSlug string
+	if err = tx.QueryRow(c.Context(), `SELECT event_id, site_slug, event_slug FROM participation.forms WHERE id=$1::uuid FOR UPDATE`, formID).Scan(&eventID, &siteSlug, &eventSlug); err != nil {
+		return problem(c, 404, "form_not_found", "formulario no encontrado")
+	}
+
+	var currentState string
+	err = tx.QueryRow(c.Context(), `SELECT state FROM participation.registrations WHERE id=$1::uuid AND form_id=$2::uuid AND self_access_token_hash=$3 FOR UPDATE`, regID, formID, tokenHash).Scan(&currentState)
+	if err != nil {
+		return problem(c, 404, "registration_not_found", "registro no encontrado")
+	}
+
+	if currentState == "cancelled" {
+		if err = tx.Commit(c.Context()); err != nil {
+			return problem(c, 503, "persistence_unavailable", "no se pudo confirmar la cancelación")
+		}
+		return c.JSON(fiber.Map{"id": regID.String(), "event_id": eventID, "state": "cancelled"})
+	}
+
+	if _, err = tx.Exec(c.Context(), `UPDATE participation.registrations SET state='cancelled', ticket_state=CASE WHEN ticket_id IS NOT NULL THEN 'revoked' ELSE ticket_state END, waitlist_position=NULL, updated_at=now() WHERE id=$1::uuid`, regID); err != nil {
+		return problem(c, 503, "persistence_unavailable", "no se pudo cancelar el registro")
+	}
+
+	if currentState == "confirmed" {
+		var promotedID string
+		err = tx.QueryRow(c.Context(), `SELECT id::text FROM participation.registrations WHERE form_id=$1::uuid AND state='waitlisted' ORDER BY waitlist_position ASC NULLS LAST, created_at ASC LIMIT 1 FOR UPDATE`, formID).Scan(&promotedID)
+		if err == nil {
+			ticketID := uuid.NewString()
+			ticketJWS := makeTicket(ticketID, eventID, siteSlug, eventSlug)
+			if _, err = tx.Exec(c.Context(), `UPDATE participation.registrations SET state='confirmed', waitlist_position=NULL, ticket_id=$2, ticket_jws=$3, ticket_state='active', updated_at=now() WHERE id=$1::uuid`, promotedID, ticketID, ticketJWS); err != nil {
+				return problem(c, 503, "persistence_unavailable", "no se pudo promover la lista de espera")
+			}
+		} else if errors.Is(err, pgx.ErrNoRows) {
+			if _, err = tx.Exec(c.Context(), `UPDATE participation.forms SET remaining=remaining+1, confirmed_count=GREATEST(confirmed_count-1, 0) WHERE id=$1::uuid`, formID); err != nil {
+				return problem(c, 503, "persistence_unavailable", "no se pudo liberar el cupo")
+			}
+		} else {
+			return problem(c, 503, "persistence_unavailable", "no se pudo consultar la lista de espera")
+		}
+	}
+
+	if err = tx.Commit(c.Context()); err != nil {
+		return problem(c, 503, "persistence_unavailable", "no se pudo confirmar la cancelación")
+	}
+	return c.JSON(fiber.Map{"id": regID.String(), "event_id": eventID, "state": "cancelled"})
 }
 func hashString(v string) string {
 	h := sha256.Sum256([]byte(v))
