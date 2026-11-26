@@ -8,15 +8,26 @@ export function loadWorkerConfig(env) {
     maxBackoffSeconds: Number(env.WORKER_MAX_BACKOFF_SECONDS || 300),
     failFirstN: Number(env.SIMULATOR_FAIL_FIRST_N || 0),
     failEveryN: Number(env.SIMULATOR_FAIL_EVERY_N || 0),
+    participationInternalUrl: (env.PARTICIPATION_INTERNAL_URL || '').trim(),
+    participationInternalToken: (env.PARTICIPATION_INTERNAL_TOKEN || 'nexo-internal-sync').trim(),
+    onsiteInternalUrl: (env.ONSITE_INTERNAL_URL || '').trim(),
+    onsiteInternalToken: (env.ONSITE_INTERNAL_TOKEN || 'nexo-internal-sync').trim(),
+    httpTimeoutMs: Number(env.BROKER_HTTP_TIMEOUT_MS || 5000),
   };
-  if (!config.tenants.length) throw new Error('WORKER_TENANT_IDS must list authorized tenant UUIDs.');
+  if (config.brokerMode !== 'simulator' && config.brokerMode !== 'http') {
+    throw new Error('BROKER_MODE must select an available publisher adapter.');
+  }
+  if (config.brokerMode === 'simulator' && !config.tenants.length) {
+    throw new Error('WORKER_TENANT_IDS must list authorized tenant UUIDs.');
+  }
   for (const tenant of config.tenants) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenant)) {
       throw new Error(`Invalid tenant UUID in WORKER_TENANT_IDS: ${tenant}`);
     }
   }
-  if (config.brokerMode !== 'simulator') throw new Error('BROKER_MODE must select an available publisher adapter.');
-  if (env.NODE_ENV !== 'development' && env.NODE_ENV !== 'test') throw new Error('Broker simulator is restricted to development or test.');
+  if (config.brokerMode === 'simulator' && env.NODE_ENV !== 'development' && env.NODE_ENV !== 'test') {
+    throw new Error('Broker simulator is restricted to development or test.');
+  }
   return config;
 }
 

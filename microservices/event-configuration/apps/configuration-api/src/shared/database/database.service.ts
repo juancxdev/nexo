@@ -68,6 +68,14 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     return this.isConnected;
   }
 
+  async listPublicPublishedEvents(limit = 20) {
+    const result = await this.pool.query(
+      'SELECT id, slug, title, description, kind, starts_at, ends_at, timezone FROM events.list_public_published_events($1)',
+      [limit],
+    );
+    return result.rows;
+  }
+
   /**
    * Executes a callback within a transactional context enforcing Row Level Security (RLS)
    * for the given organization_id via PostgreSQL `app.current_organization_id`.

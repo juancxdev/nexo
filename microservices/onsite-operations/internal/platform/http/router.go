@@ -280,6 +280,7 @@ func (r *Router) routes() {
 	a.Get("/onsite/v1/dashboard", r.auth("onsite:read"), r.dashboard)
 	a.Get("/onsite/v1/events", r.auth("onsite:read"), r.events)
 	a.Get("/onsite/v1/events/:event_id/roster", r.auth("onsite:read"), r.roster)
+	a.Post("/onsite/internal/v1/releases", r.ingestRelease)
 	r.registerScanRoutes(a)
 }
 
@@ -576,6 +577,132 @@ func (r *Router) roster(c fiber.Ctx) error {
 		return problem(c, 503, "persistence_unavailable", "no se pudo consultar el padrón")
 	}
 	return c.JSON(fiber.Map{"items": items, "summary": fiber.Map{"confirmed": len(items)}})
+}
+
+func (r *Router) ingestRelease(c fiber.Ctx) error {
+	expectedToken := strings.TrimSpace(os.Getenv("ONSITE_INTERNAL_TOKEN"))
+	if expectedToken == "" {
+		expectedToken = "nexo-internal-sync"
+	}
+	if strings.TrimSpace(c.Get("X-Internal-Token")) != expectedToken {
+		return problem(c, 401, "unauthorized", "token interno inválido")
+	}
+	if r.DB == nil || r.DB.Pool == nil {
+		return problem(c, 503, "persistence_unavailable", "base de datos no disponible")
+	}
+
+	var payload struct {
+		TenantID             string `json:"tenant_id"`
+		SourceEventID        string `json:"source_event_id"`
+		Name                 string `json:"name"`
+		Status               string `json:"status"`
+		StartsAt             string `json:"starts_at"`
+		EndsAt               string `json:"ends_at"`
+		Timezone             string `json:"timezone"`
+		PublishedRevision    int    `json:"published_revision"`
+		ParticipationEventID string `json:"participation_event_id"`
+		Scopes               []struct {
+			Code string `json:"code"`
+			Name string `json:"name"`
+			Kind string `json:"kind"`
+		} `json:"scopes"`
+	}
+	if err := json.Unmarshal(c.Body(), &payload); err != nil {
+		return problem(c, 400, "invalid_payload", "JSON inválido")
+	}
+
+	tenantID, err := uuid.Parse(strings.TrimSpace(payload.TenantID))
+	if err != nil || strings.TrimSpace(payload.SourceEventID) == "" || strings.TrimSpace(payload.Name) == "" {
+		return problem(c, 400, "invalid_payload", "tenant_id, source_event_id y name son requeridos")
+	}
+
+	status := "active"
+	switch strings.ToLower(strings.TrimSpace(payload.Status)) {
+	case "draft":
+		status = "draft"
+	case "closed", "cancelled", "archived":
+		status = "closed"
+	}
+
+	now := time.Now().UTC()
+	startsAt := now
+	if payload.StartsAt != "" {
+		if parsed, err := time.Parse(time.RFC3339, payload.StartsAt); err == nil {
+			startsAt = parsed
+		}
+	}
+	endsAt := startsAt.Add(2 * time.Hour)
+	if payload.EndsAt != "" {
+		if parsed, err := time.Parse(time.RFC3339, payload.EndsAt); err == nil {
+			endsAt = parsed
+		}
+	}
+
+	rev := payload.PublishedRevision
+	if rev <= 0 {
+		rev = 1
+	}
+
+	ctx, cancel := context.WithTimeout(c.Context(), 5*time.Second)
+	defer cancel()
+
+	var onsiteEventID uuid.UUID
+	err = r.DB.Pool.QueryRow(ctx, `
+		INSERT INTO onsite.events (id, tenant_id, source_event_id, name, status, starts_at, ends_at, participation_event_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, ''))
+		ON CONFLICT (tenant_id, source_event_id) DO UPDATE SET
+			name = EXCLUDED.name,
+			status = EXCLUDED.status,
+			starts_at = EXCLUDED.starts_at,
+			ends_at = EXCLUDED.ends_at,
+			participation_event_id = COALESCE(EXCLUDED.participation_event_id, onsite.events.participation_event_id)
+		RETURNING id
+	`, uuid.New(), tenantID, strings.TrimSpace(payload.SourceEventID), strings.TrimSpace(payload.Name), status, startsAt, endsAt, strings.TrimSpace(payload.ParticipationEventID)).Scan(&onsiteEventID)
+	if err != nil {
+		return problem(c, 500, "persistence_error", "no se pudo proyectar el evento en onsite")
+	}
+
+	scopes := payload.Scopes
+	if len(scopes) == 0 {
+		scopes = append(scopes, struct {
+			Code string `json:"code"`
+			Name string `json:"name"`
+			Kind string `json:"kind"`
+		}{Code: "main", Name: "Acceso general", Kind: "event"})
+	}
+	for _, sc := range scopes {
+		code := strings.TrimSpace(sc.Code)
+		name := strings.TrimSpace(sc.Name)
+		kind := strings.ToLower(strings.TrimSpace(sc.Kind))
+		if code == "" {
+			continue
+		}
+		if name == "" {
+			name = code
+		}
+		switch kind {
+		case "event", "venue", "gate", "session", "track":
+		default:
+			kind = "session"
+		}
+		if _, err := r.DB.Pool.Exec(ctx, `
+			INSERT INTO onsite.scopes (id, event_id, code, name, kind)
+			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (event_id, code) DO UPDATE SET
+				name = EXCLUDED.name,
+				kind = EXCLUDED.kind
+		`, uuid.New(), onsiteEventID, code, name, kind); err != nil {
+			return problem(c, 500, "persistence_error", "no se pudieron proyectar los scopes del evento")
+		}
+	}
+
+	return c.Status(200).JSON(fiber.Map{
+		"status":             "synced",
+		"onsite_event_id":    onsiteEventID.String(),
+		"source_event_id":    payload.SourceEventID,
+		"published_revision": rev,
+		"scopes_synced":      len(scopes),
+	})
 }
 
 var _ = fmt.Sprintf

@@ -11,10 +11,11 @@ type EventCarouselProps = {
   locale: Locale;
   now: Date;
   onAccess: () => void;
+  onSelectEvent?: (event: HomeEvent) => void;
 };
 
 /** Carrusel horizontal de eventos: flechas, deslizamiento táctil y teclado (el riel recibe foco). */
-export function EventCarousel({events, content, locale, now, onAccess}: EventCarouselProps) {
+export function EventCarousel({events, content, locale, now, onAccess, onSelectEvent}: EventCarouselProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [canPrev, setCanPrev] = useState(false);
   const [canNext, setCanNext] = useState(false);
@@ -84,7 +85,7 @@ export function EventCarousel({events, content, locale, now, onAccess}: EventCar
                 <p className="nx-home-event-description">{event.description}</p>
                 <div className="nx-home-event-footer">
                   <span className="nx-home-event-place"><MapPin size={16}/>{event.place}</span>
-                  <button type="button" className="nx-home-link" onClick={onAccess}>
+                  <button type="button" className="nx-home-link" onClick={() => (event.slug && onSelectEvent ? onSelectEvent(event) : onAccess())}>
                     {status === 'finished' ? content.details : content.register}<ArrowRight size={16}/>
                   </button>
                 </div>

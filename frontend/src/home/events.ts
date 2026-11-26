@@ -9,6 +9,7 @@ export type EventStatus = 'pending' | 'inProgress' | 'finished';
  */
 export type HomeEvent = {
   id: string;
+  slug?: string;
   title: string;
   description: string;
   category: string;

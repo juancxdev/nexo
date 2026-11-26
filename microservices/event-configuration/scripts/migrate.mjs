@@ -11,7 +11,7 @@ if (process.env.NEXO_SHARED_DATABASE === 'true' && process.env.POSTGRES_DB !== '
 const client = new Client({ host: process.env.POSTGRES_HOST || 'postgres', port: Number(process.env.POSTGRES_PORT || 5432), database: process.env.POSTGRES_DB || 'nexo', user: process.env.EVENTS_MIGRATOR_USER || 'events_migrator', password: process.env.EVENTS_MIGRATOR_PASSWORD, options: '-c search_path=events,public' });
 const tableGrants = [
   ['events', 'SELECT, INSERT, UPDATE'], ['event_revisions', 'SELECT, INSERT'], ['assignments', 'SELECT, INSERT, UPDATE'],
-  ['releases', 'SELECT, INSERT'], ['release_artifacts', 'SELECT, INSERT'], ['release_consumers', 'SELECT'],
+  ['releases', 'SELECT, INSERT'], ['release_artifacts', 'SELECT, INSERT'], ['release_consumers', 'SELECT, INSERT, UPDATE'],
   ['audit', 'SELECT, INSERT'], ['outbox', 'SELECT, INSERT, UPDATE'], ['idempotency_records', 'SELECT, INSERT'],
   ['venues', 'SELECT, INSERT, UPDATE'], ['programs', 'SELECT, INSERT, UPDATE'], ['sessions', 'SELECT, INSERT, UPDATE'],
   ['resource_reservations', 'SELECT, INSERT, UPDATE'], ['speakers', 'SELECT, INSERT, UPDATE'],
