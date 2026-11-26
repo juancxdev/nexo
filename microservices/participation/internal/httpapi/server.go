@@ -148,11 +148,11 @@ func (s *Server) register(c fiber.Ctx) error {
 		return problem(c, 503, "persistence_unavailable", "no se pudo iniciar el registro")
 	}
 	defer tx.Rollback(c.Context())
-	var formID, eventID, formVersion, consentVersion, tenantID string
+	var formID, eventID, eventTitle, formVersion, consentVersion, tenantID string
 	var remaining int
 	var waitlist bool
 	var binding string
-	err = tx.QueryRow(c.Context(), `SELECT id::text,event_id,form_version_id::text,consent_version,remaining,waitlist_enabled,binding_state,tenant_id::text FROM participation.forms WHERE site_slug=$1 AND event_slug=$2 FOR UPDATE`, c.Params("site"), c.Params("event")).Scan(&formID, &eventID, &formVersion, &consentVersion, &remaining, &waitlist, &binding, &tenantID)
+	err = tx.QueryRow(c.Context(), `SELECT id::text,event_id,event_title,form_version_id::text,consent_version,remaining,waitlist_enabled,binding_state,tenant_id::text FROM participation.forms WHERE site_slug=$1 AND event_slug=$2 FOR UPDATE`, c.Params("site"), c.Params("event")).Scan(&formID, &eventID, &eventTitle, &formVersion, &consentVersion, &remaining, &waitlist, &binding, &tenantID)
 	if err != nil {
 		return problem(c, 404, "form_not_found", "formulario no encontrado")
 	}
@@ -210,7 +210,7 @@ func (s *Server) register(c fiber.Ctx) error {
 	}
 	hukidState := "not_requested"
 	if state == "confirmed" && s.OperationsURL != "" && s.InternalToken != "" {
-		hukidState = s.requestHukID(c.Context(), tenantID, eventID, id.String(), *ticketID)
+		hukidState = s.requestHukID(c.Context(), tenantID, eventID, eventTitle, id.String(), *ticketID, in.Attendee.FullName, in.Answers)
 		_, _ = s.DB.Exec(c.Context(), `UPDATE participation.registrations SET hukid_state=$2 WHERE id=$1::uuid`, id, hukidState)
 	}
 	return receipt(c, id.String(), eventID, state, pos, ticketID, token, hukidState)
@@ -222,8 +222,15 @@ func fingerprint(fullName, institution, email string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *Server) requestHukID(ctx context.Context, tenantID, eventID, registrationID, ticketID string) string {
-	body, _ := json.Marshal(map[string]string{"event_id": eventID, "registration_id": registrationID, "ticket_id": ticketID})
+func (s *Server) requestHukID(ctx context.Context, tenantID, eventID, eventTitle, registrationID, ticketID, participantName string, answers map[string]any) string {
+	role := "attendee"
+	if value, ok := answers["role"].(string); ok && strings.TrimSpace(value) != "" {
+		role = strings.TrimSpace(value)
+	}
+	body, _ := json.Marshal(map[string]any{
+		"event_id": eventID, "event_title": eventTitle, "registration_id": registrationID,
+		"ticket_id": ticketID, "participant_name": participantName, "participation_role": role,
+	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.OperationsURL+"/internal/v1/participation-credentials", bytes.NewReader(body))
 	if err != nil {
 		return "request_failed"

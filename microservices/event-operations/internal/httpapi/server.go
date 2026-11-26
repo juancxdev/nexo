@@ -422,9 +422,12 @@ func (s *Server) createDelivery(c fiber.Ctx) error {
 }
 func (s *Server) createParticipationDelivery(c fiber.Ctx) error {
 	var in struct {
-		EventID        string `json:"event_id"`
-		RegistrationID string `json:"registration_id"`
-		TicketID       string `json:"ticket_id"`
+		EventID           string `json:"event_id"`
+		EventTitle        string `json:"event_title"`
+		RegistrationID    string `json:"registration_id"`
+		TicketID          string `json:"ticket_id"`
+		ParticipantName   string `json:"participant_name"`
+		ParticipationRole string `json:"participation_role"`
 	}
 	if json.Unmarshal(c.Body(), &in) != nil || in.EventID == "" || in.RegistrationID == "" || in.TicketID == "" {
 		return problem(c, 400, "invalid_body", "event_id, registration_id y ticket_id son obligatorios")
@@ -440,7 +443,29 @@ func (s *Server) createParticipationDelivery(c fiber.Ctx) error {
 	}
 	issuer = hukidIssuer(issuer)
 	definition = hukidDefinition(definition, true)
-	claims := map[string]any{"ticket": map[string]any{"id": in.TicketID, "eventId": in.EventID, "registrationId": in.RegistrationID}}
+	participantName := strings.TrimSpace(in.ParticipantName)
+	if participantName == "" {
+		participantName = "Participante"
+	}
+	eventTitle := strings.TrimSpace(in.EventTitle)
+	if eventTitle == "" {
+		eventTitle = in.EventID
+	}
+	role := strings.TrimSpace(in.ParticipationRole)
+	if role == "" {
+		role = "attendee"
+	}
+	// HukID's canonical event-participation definition is intentionally flat.
+	// Do not wrap these values in a ticket object: the node rejects unknown
+	// fields and validates the exact published definition.
+	claims := map[string]any{
+		"participantName":   participantName,
+		"eventTitle":        eventTitle,
+		"organizerName":     "IncubaUNAS",
+		"eventDate":         time.Now().UTC().Format("2006-01-02"),
+		"participationRole": role,
+		"certificateNumber": in.TicketID,
+	}
 	payload := map[string]any{"issuerId": issuer, "credentialDefinition": definition, "claims": claims, "delivery": map[string]any{"flow": "pre-authorized_code", "expiresInSeconds": 300, "txCodeRequired": false}, "source": map[string]any{"system": "nexo", "reference": in.TicketID}}
 	raw, _ := json.Marshal(payload)
 	digest := sha256.Sum256(raw)

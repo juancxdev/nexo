@@ -9,7 +9,19 @@ WHERE email_normalized IS NULL;
 ALTER TABLE participation.registrations
   ALTER COLUMN email_normalized SET NOT NULL;
 
-DROP INDEX IF EXISTS participation.registrations_form_id_email_key;
+CREATE SCHEMA IF NOT EXISTS participation_contract;
+
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM pg_constraint
+    WHERE conrelid = 'participation.registrations'::regclass
+      AND conname = 'registrations_form_id_email_key'
+  ) THEN
+    ALTER TABLE participation.registrations
+      DROP CONSTRAINT registrations_form_id_email_key;
+  END IF;
+END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS registrations_unique_email_per_form
   ON participation.registrations(form_id, email_normalized)
   WHERE state IN ('pending','confirmed','waitlisted');
