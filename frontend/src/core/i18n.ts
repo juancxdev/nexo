@@ -136,6 +136,7 @@ const messages = {
     "participation.credentialInstructions": "Escanea este QR o pega la oferta en tu wallet HukID.",
     "participation.credentialPreparing": "Preparando credencial HukID…",
     "participation.credentialPreparingDescription": "La credencial se está solicitando al emisor.",
+    "participation.credentialFailed": "No se pudo generar la credencial HukID",
   },
   en: {
     "nav.workspace": "Workspace",
@@ -269,6 +270,7 @@ const messages = {
     "participation.credentialInstructions": "Scan this QR or paste the offer into your HukID wallet.",
     "participation.credentialPreparing": "Preparing HukID credential…",
     "participation.credentialPreparingDescription": "The credential is being requested from the issuer.",
+    "participation.credentialFailed": "The HukID credential could not be generated",
   },
 } as const;
 export function readLocale(): Locale {
