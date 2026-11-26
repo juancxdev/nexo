@@ -374,12 +374,16 @@ func (s *Server) createDelivery(c fiber.Ctx) error {
 	issuer = hukidIssuer(issuer)
 	definition = hukidDefinition(definition, false)
 	claims := map[string]any{
-		"certificate": map[string]any{"id": cert, "verificationCode": code, "issuedAt": time.Now().UTC().Format(time.RFC3339), "verificationUrl": publicVerificationURL(code), "evidenceDigest": evidence},
-		"recipient":   map[string]any{"registrationId": registrationID, "displayName": displayName},
-		"event":       map[string]any{"id": eventID},
-		"achievement": map[string]any{"attendanceRate": 1.0},
+		"participantName":   displayName,
+		"eventTitle":        eventID,
+		"organizerName":     "IncubaUNAS",
+		"eventDate":         time.Now().UTC().Format("2006-01-02"),
+		"participationRole": "attendee",
+		"certificateNumber": code,
 	}
-	payload := map[string]any{"issuerId": issuer, "credentialDefinition": definition, "claims": claims, "delivery": map[string]any{"flow": "pre-authorized_code", "expiresInSeconds": 300, "txCodeRequired": true}, "source": map[string]any{"system": "nexo", "reference": cert, "evidenceDigest": evidence}}
+	// HukID v0 del contrato canónico no soporta tx_code; el consentimiento
+	// explícito se registra en Nexo antes de crear esta solicitud.
+	payload := map[string]any{"issuerId": issuer, "credentialDefinition": definition, "claims": claims, "delivery": map[string]any{"flow": "pre-authorized_code", "expiresInSeconds": 300, "txCodeRequired": false}, "source": map[string]any{"system": "nexo", "reference": cert}}
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return problem(c, 500, "claims_serialization_failed", "no se pudo preparar la solicitud HukID")

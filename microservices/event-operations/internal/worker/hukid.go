@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -228,12 +229,17 @@ func (w *Worker) process(ctx context.Context, id, key, state, requestID, base, o
 	}
 	return err
 }
-func (w *Worker) token(ctx context.Context, url string) (string, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBufferString("grant_type=client_credentials&scope=issuance:create%20issuance:read"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+func (w *Worker) token(ctx context.Context, oauthURL string) (string, error) {
+	values := url.Values{"grant_type": {"client_credentials"}, "scope": {"issuance:create issuance:read"}}
 	if clientID, clientSecret := os.Getenv("HUKID_CLIENT_ID"), os.Getenv("HUKID_CLIENT_SECRET"); clientID != "" && clientSecret != "" {
-		req.SetBasicAuth(clientID, clientSecret)
+		// HukID Integration API usa client authentication en el formulario OAuth.
+		// No usar Basic aquí: además de coincidir con el contrato canónico,
+		// evita que los adaptadores local, sandbox y productivo diverjan.
+		values.Set("client_id", clientID)
+		values.Set("client_secret", clientSecret)
 	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, oauthURL, bytes.NewBufferString(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := w.Client.Do(req)
 	if err != nil {
 		return "", err
