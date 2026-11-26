@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,12 +29,29 @@ type Server struct {
 	App           *fiber.App
 	OperationsURL string
 	InternalToken string
+	security      *securityState
 }
 
 func New(db *pgxpool.Pool, operationsURL, internalToken string) *Server {
-	s := &Server{DB: db, App: fiber.New(fiber.Config{AppName: "Nexo Participation"}), OperationsURL: strings.TrimRight(operationsURL, "/"), InternalToken: internalToken}
-	s.routes()
+	config, err := DefaultSecurityConfig()
+	if err != nil {
+		panic(err)
+	}
+	s, err := NewWithSecurityConfig(db, operationsURL, internalToken, config)
+	if err != nil {
+		panic(err)
+	}
 	return s
+}
+
+func NewWithSecurityConfig(db *pgxpool.Pool, operationsURL, internalToken string, config SecurityConfig) (*Server, error) {
+	security, err := NewSecurityState(config)
+	if err != nil {
+		return nil, err
+	}
+	s := &Server{DB: db, App: fiber.New(fiber.Config{AppName: "Nexo Participation"}), OperationsURL: strings.TrimRight(operationsURL, "/"), InternalToken: internalToken, security: security}
+	s.routes()
+	return s, nil
 }
 func (s *Server) routes() {
 	a := s.App
@@ -45,7 +63,8 @@ func (s *Server) routes() {
 				c.Set("Vary", "Origin")
 			}
 		}
-		c.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Correlation-Id")
+		c.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Correlation-Id, X-Participation-Challenge, X-Participation-Proof")
+		c.Set("Access-Control-Allow-Credentials", "true")
 		c.Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 		if c.Method() == "OPTIONS" {
 			return c.SendStatus(204)
@@ -63,8 +82,107 @@ func (s *Server) routes() {
 	})
 	a.Get("/participation/public/v1/sites/:site/events/:event/form", s.form)
 	a.Post("/participation/public/v1/sites/:site/events/:event/registrations", s.register)
+	a.Get("/participation/public/v2/sites/:site/events/:event/form", s.protectPublic(false, s.form))
+	a.Get("/participation/public/v2/sites/:site/events/:event/challenge", s.protectPublic(false, s.challenge))
+	a.Post("/participation/public/v2/sites/:site/events/:event/registrations", s.protectPublic(true, s.register))
+	a.Get("/participation/internal/v1/security/metrics", s.securityMetrics)
 	a.Get("/participation/self/v1/registrations/:id/ticket", s.ticket)
 	a.Get("/participation/self/v1/registrations/:id/credential", s.credential)
+}
+
+func (s *Server) protectPublic(requireChallenge bool, next fiber.Handler) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		s.security.metrics.publicRequests.Add(1)
+		ip, err := s.security.publicIP(c)
+		if err != nil {
+			return problem(c, 503, "client_ip_unavailable", "no se pudo determinar la dirección de conexión")
+		}
+		if s.security.allowlisted(ip) {
+			s.security.metrics.allowlistedRequests.Add(1)
+			return next(c)
+		}
+
+		deviceID, _ := s.security.readDeviceCookie(c.Get("Cookie"))
+		allowed, retryAfter := s.security.allowRequest(ip, c.Params("site"), c.Params("event"), deviceID, time.Now())
+		if !allowed {
+			s.security.metrics.rateLimited.Add(1)
+			c.Set("Retry-After", strconv.Itoa(retryAfterSeconds(retryAfter)))
+			return problem(c, 429, "rate_limit_exceeded", "límite temporal de solicitudes alcanzado")
+		}
+
+		if requireChallenge {
+			if deviceID == "" {
+				s.security.metrics.challengesRejected.Add(1)
+				return problem(c, 403, "challenge_required", "se requiere obtener y resolver el challenge")
+			}
+			result := s.security.verifyChallenge(
+				c.Get("X-Participation-Challenge"),
+				c.Get("X-Participation-Proof"),
+				c.Params("site"),
+				c.Params("event"),
+				deviceID,
+				time.Now(),
+			)
+			switch result {
+			case challengeValid:
+			case challengeMissing:
+				s.security.metrics.challengesRejected.Add(1)
+				return problem(c, 403, "challenge_required", "se requiere obtener y resolver el challenge")
+			case challengeExpired:
+				s.security.metrics.challengesRejected.Add(1)
+				return problem(c, 403, "challenge_expired", "el challenge expiró; solicita uno nuevo")
+			case challengeReplay:
+				s.security.metrics.challengesRejected.Add(1)
+				return problem(c, 409, "challenge_replayed", "el challenge ya fue utilizado")
+			case challengeStateFull:
+				s.security.metrics.challengesRejected.Add(1)
+				return problem(c, 503, "challenge_state_unavailable", "no se pudo verificar el challenge")
+			default:
+				s.security.metrics.challengesRejected.Add(1)
+				return problem(c, 403, "challenge_invalid", "el challenge no es válido")
+			}
+		}
+		return next(c)
+	}
+}
+
+func (s *Server) challenge(c fiber.Ctx) error {
+	var exists bool
+	if err := s.DB.QueryRow(c.Context(), `SELECT EXISTS(SELECT 1 FROM participation.forms WHERE site_slug=$1 AND event_slug=$2)`, c.Params("site"), c.Params("event")).Scan(&exists); err != nil {
+		return problem(c, 503, "persistence_unavailable", "no se pudo consultar el formulario")
+	}
+	if !exists {
+		return problem(c, 404, "form_not_found", "formulario no encontrado")
+	}
+	return s.issueChallengeResponse(c)
+}
+
+func (s *Server) issueChallengeResponse(c fiber.Ctx) error {
+	now := time.Now()
+	deviceID, err := s.security.ensureDeviceCookie(c, now)
+	if err != nil {
+		return problem(c, 503, "challenge_unavailable", "no se pudo preparar el challenge")
+	}
+	token, expiresAt, err := s.security.issueChallenge(c.Params("site"), c.Params("event"), deviceID, now)
+	if err != nil {
+		return problem(c, 503, "challenge_unavailable", "no se pudo generar el challenge")
+	}
+	s.security.metrics.challengesIssued.Add(1)
+	return c.JSON(fiber.Map{
+		"challenge":  token,
+		"difficulty": s.security.config.ChallengeDifficulty,
+		"expires_at": expiresAt.UTC().Format(time.RFC3339),
+	})
+}
+
+func (s *Server) securityMetrics(c fiber.Ctx) error {
+	if s.security.config.MetricsToken == "" {
+		return problem(c, 503, "metrics_not_configured", "las métricas operativas no están configuradas")
+	}
+	if !bearerMatches(c.Get("Authorization"), s.security.config.MetricsToken) {
+		return problem(c, 401, "unauthorized", "token operativo requerido")
+	}
+	return c.JSON(s.security.metricsSnapshot())
 }
 
 type formRow struct {

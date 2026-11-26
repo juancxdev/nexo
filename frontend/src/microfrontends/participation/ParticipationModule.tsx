@@ -5,6 +5,7 @@ import { Alert, Badge, Button, Card, Input, PageHeading } from '../../design-sys
 import { useI18n } from '../../core/i18n';
 import type { ModuleContext } from '../../platform/microfrontends/contracts';
 import { createParticipationClient, type HukidCredentialDelivery, type ParticipationForm, type RegistrationReceipt, type TicketResponse } from './api';
+import { solveParticipationChallenge } from './proof-of-work';
 import './participation.css';
 
 const defaultSite = import.meta.env.VITE_PARTICIPATION_SITE_SLUG || 'incuba-unas';
@@ -30,7 +31,7 @@ export function ParticipationModule({ context }: { context: ModuleContext }) {
   useEffect(() => {
     let active = true;
     setLoading(true);
-    api.loadForm(site, event).then((result) => { if (active) setForm(result); })
+    api.loadFormV2(site, event).then((result) => { if (active) setForm(result); })
       .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : (locale === 'en' ? 'The event form could not be loaded.' : 'No se pudo cargar el formulario del evento.')); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -42,13 +43,15 @@ export function ParticipationModule({ context }: { context: ModuleContext }) {
     setError('');
     setSubmitting(true);
     try {
-      const result = await api.register(site, event, {
+      const challenge = await api.getChallenge(site, event);
+      const proof = await solveParticipationChallenge(challenge.challenge, challenge.difficulty);
+      const result = await api.registerV2(site, event, {
         form_version_id: form?.form_version_id,
         consent_version: form?.consent_version,
         consent_accepted: true,
         attendee: { full_name: values.fullName, email: values.email, institution: values.institution },
         answers,
-      }, idempotencyKey.current);
+      }, idempotencyKey.current, challenge.challenge, proof);
       setReceipt(result);
       if (result.state === 'confirmed' && result.self_access_token) {
         setTicket(await api.getTicket(result.id, result.self_access_token));

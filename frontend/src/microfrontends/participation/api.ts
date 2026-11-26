@@ -40,13 +40,27 @@ export type TicketResponse = {
   expires_at: string;
 };
 
+export type ParticipationChallenge = {
+  challenge: string;
+  difficulty: number;
+  expires_at: string;
+};
+
 export class ParticipationApiError extends Error {
   constructor(message: string, readonly status: number, readonly code?: string) {
     super(message);
   }
 }
 
-type RequestOptions = { method?: string; body?: unknown; token?: string; idempotencyKey?: string };
+type RequestOptions = {
+  method?: string;
+  body?: unknown;
+  token?: string;
+  idempotencyKey?: string;
+  challenge?: string;
+  proof?: string;
+  credentials?: RequestCredentials;
+};
 
 function randomKey() {
   return `participation-${crypto.randomUUID()}`;
@@ -58,10 +72,13 @@ export function createParticipationClient(baseUrl: string) {
     if (options.body !== undefined) headers['Content-Type'] = 'application/json';
     if (options.token) headers.Authorization = `Bearer ${options.token}`;
     if (options.method && options.method !== 'GET') headers['Idempotency-Key'] = options.idempotencyKey || randomKey();
+    if (options.challenge) headers['X-Participation-Challenge'] = options.challenge;
+    if (options.proof) headers['X-Participation-Proof'] = options.proof;
     const response = await fetch(`${baseUrl.replace(/\/$/, '')}${path}`, {
       method: options.method ?? 'GET',
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      credentials: options.credentials,
     });
     const text = await response.text();
     let payload: unknown = null;
@@ -75,7 +92,10 @@ export function createParticipationClient(baseUrl: string) {
 
   return {
     loadForm: (site: string, event: string) => request<ParticipationForm>(`/participation/public/v1/sites/${encodeURIComponent(site)}/events/${encodeURIComponent(event)}/form`),
+    loadFormV2: (site: string, event: string) => request<ParticipationForm>(`/participation/public/v2/sites/${encodeURIComponent(site)}/events/${encodeURIComponent(event)}/form`),
+    getChallenge: (site: string, event: string) => request<ParticipationChallenge>(`/participation/public/v2/sites/${encodeURIComponent(site)}/events/${encodeURIComponent(event)}/challenge`, { credentials: 'include' }),
     register: (site: string, event: string, body: unknown, idempotencyKey: string) => request<RegistrationReceipt>(`/participation/public/v1/sites/${encodeURIComponent(site)}/events/${encodeURIComponent(event)}/registrations`, { method: 'POST', body, idempotencyKey }),
+    registerV2: (site: string, event: string, body: unknown, idempotencyKey: string, challenge: string, proof: string) => request<RegistrationReceipt>(`/participation/public/v2/sites/${encodeURIComponent(site)}/events/${encodeURIComponent(event)}/registrations`, { method: 'POST', body, idempotencyKey, challenge, proof, credentials: 'include' }),
     getTicket: (id: string, token: string) => request<TicketResponse>(`/participation/self/v1/registrations/${encodeURIComponent(id)}/ticket`, { token }),
     getCredential: (id: string, token: string) => request<HukidCredentialDelivery>(`/participation/self/v1/registrations/${encodeURIComponent(id)}/credential`, { token }),
   };

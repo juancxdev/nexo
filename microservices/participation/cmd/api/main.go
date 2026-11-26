@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -30,7 +31,17 @@ func main() {
 	if addr == "" {
 		addr = ":8084"
 	}
-	app := api.New(db, os.Getenv("EVENT_OPERATIONS_URL"), os.Getenv("NEXO_INTERNAL_SERVICE_TOKEN"))
+	securityConfig, err := api.SecurityConfigFromEnv()
+	if err != nil {
+		log.Fatal(err)
+	}
+	app, err := api.NewWithSecurityConfig(db, os.Getenv("EVENT_OPERATIONS_URL"), os.Getenv("NEXO_INTERNAL_SERVICE_TOKEN"), securityConfig)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if strings.TrimSpace(os.Getenv("PARTICIPATION_CHALLENGE_SECRET")) == "" {
+		log.Print("PARTICIPATION_CHALLENGE_SECRET is unset; v2 challenge keys are ephemeral and rotate on restart")
+	}
 	log.Printf("Participation API escuchando en %s", addr)
 	log.Fatal(app.App.Listen(addr, fiber.ListenConfig{EnablePrintRoutes: false}))
 }
