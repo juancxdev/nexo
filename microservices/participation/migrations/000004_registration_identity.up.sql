@@ -9,6 +9,11 @@ WHERE email_normalized IS NULL;
 ALTER TABLE participation.registrations
   ALTER COLUMN email_normalized SET NOT NULL;
 
+-- The legacy uniqueness may have been created as either an index or a
+-- table constraint, depending on the database version. Drop both forms
+-- idempotently before installing the partial normalized-email index.
+ALTER TABLE participation.registrations
+  DROP CONSTRAINT IF EXISTS registrations_form_id_email_key;
 DROP INDEX IF EXISTS participation.registrations_form_id_email_key;
 CREATE UNIQUE INDEX IF NOT EXISTS registrations_unique_email_per_form
   ON participation.registrations(form_id, email_normalized)
