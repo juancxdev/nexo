@@ -23,7 +23,10 @@ CREATE INDEX IF NOT EXISTS registrations_fingerprint_idx
   ON participation.registrations(form_id, participant_fingerprint)
   WHERE participant_fingerprint IS NOT NULL;
 
-CREATE OR REPLACE VIEW participation_contract.registrations_v1 WITH (security_barrier) AS
+-- The contract view changed its column order in this migration. PostgreSQL
+-- cannot apply that change with CREATE OR REPLACE VIEW, so recreate it.
+DROP VIEW IF EXISTS participation_contract.registrations_v1;
+CREATE VIEW participation_contract.registrations_v1 WITH (security_barrier) AS
 SELECT r.id AS registration_id, f.tenant_id, f.event_id, f.site_slug, r.ticket_id,
        r.full_name, r.state, r.ticket_state
 FROM participation.registrations r
