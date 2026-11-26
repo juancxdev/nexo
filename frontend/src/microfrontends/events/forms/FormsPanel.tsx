@@ -39,7 +39,10 @@ type VersionDetail = {
   version_number: number;
   status: string;
   schema?: {
-    properties?: Record<string, { type?: string; title?: string; minLength?: number }>;
+    properties?: Record<
+      string,
+      { type?: string; title?: string; minLength?: number }
+    >;
     required?: string[];
   };
   ui_schema?: { order?: string[] };
@@ -62,7 +65,9 @@ function FormPreview({
   const [values, setValues] = useState<Record<string, string | boolean>>({});
   const [accepted, setAccepted] = useState(false);
   const [previewMsg, setPreviewMsg] = useState("");
-  const [previewErrors, setPreviewErrors] = useState<Record<string, string>>({});
+  const [previewErrors, setPreviewErrors] = useState<Record<string, string>>(
+    {},
+  );
 
   useEffect(() => {
     setValues({});
@@ -75,7 +80,9 @@ function FormPreview({
     return (
       <p>
         {selectedEventId
-          ? tr("Este evento no tiene un formulario disponible para previsualizar.")
+          ? tr(
+              "Este evento no tiene un formulario disponible para previsualizar.",
+            )
           : tr("Selecciona un evento o versión para ver la vista previa.")}
       </p>
     );
@@ -86,7 +93,9 @@ function FormPreview({
   const policies = version.field_policies || {};
   const orderedKeys = [
     ...(version.ui_schema?.order || []).filter((k) => k in props),
-    ...Object.keys(props).filter((k) => !(version.ui_schema?.order || []).includes(k)),
+    ...Object.keys(props).filter(
+      (k) => !(version.ui_schema?.order || []).includes(k),
+    ),
   ];
 
   const handlePreviewSubmit = (e: FormEvent) => {
@@ -102,7 +111,9 @@ function FormPreview({
       }
     }
     if (version.consent?.text && !accepted) {
-      nextErrors.__consent = tr("Debes aceptar el consentimiento para continuar.");
+      nextErrors.__consent = tr(
+        "Debes aceptar el consentimiento para continuar.",
+      );
     }
     if (Object.keys(nextErrors).length > 0) {
       setPreviewErrors(nextErrors);
@@ -110,7 +121,9 @@ function FormPreview({
     }
     setPreviewErrors({});
     setPreviewMsg(
-      tr("Simulación validada localmente. La vista previa no guarda respuestas."),
+      tr(
+        "Simulación validada localmente. La vista previa no guarda respuestas.",
+      ),
     );
   };
 
@@ -125,7 +138,9 @@ function FormPreview({
           <p>
             {binding
               ? `${tr("Propósito")}: ${binding.purpose} · ${tr("Vínculo")}: ${binding.status}`
-              : tr("Simulación interactiva — no guarda respuestas en el servidor.")}
+              : tr(
+                  "Simulación interactiva — no guarda respuestas en el servidor.",
+                )}
           </p>
         </div>
       </div>
@@ -450,7 +465,10 @@ export function FormsPanel({
       }
     } catch (error) {
       if (contextRef.current === contextKey) {
-        if (error instanceof ApiError && Object.keys(error.fieldErrors).length > 0) {
+        if (
+          error instanceof ApiError &&
+          Object.keys(error.fieldErrors).length > 0
+        ) {
           setFormErrors(error.fieldErrors);
         }
         setNotice(error instanceof Error ? error.message : String(error));
@@ -484,13 +502,24 @@ export function FormsPanel({
     event.preventDefault();
     const errs: Record<string, string> = {};
     if (!fieldName.trim() || !/^[a-z][a-z0-9_]*$/.test(fieldName)) {
-      errs.fieldName = tr("Usa minúsculas, números o guion bajo (ej. nombre_completo).");
+      errs.fieldName = tr(
+        "Usa minúsculas, números o guion bajo (ej. nombre_completo).",
+      );
     }
-    if (!fieldTitle.trim()) errs.fieldTitle = tr("La etiqueta del campo es obligatoria.");
-    if (!consent.trim()) errs.consent = tr("El texto de consentimiento es obligatorio.");
-    if (!consentVersion.trim()) errs.consentVersion = tr("Indica la versión del consentimiento (ej. v1.0).");
-    if (!policyPurpose.trim()) errs.policyPurpose = tr("La finalidad del campo es obligatoria.");
-    if (!retention.trim()) errs.retention = tr("Indica la referencia de retención (ej. event-plus-90d).");
+    if (!fieldTitle.trim())
+      errs.fieldTitle = tr("La etiqueta del campo es obligatoria.");
+    if (!consent.trim())
+      errs.consent = tr("El texto de consentimiento es obligatorio.");
+    if (!consentVersion.trim())
+      errs.consentVersion = tr(
+        "Indica la versión del consentimiento (ej. v1.0).",
+      );
+    if (!policyPurpose.trim())
+      errs.policyPurpose = tr("La finalidad del campo es obligatoria.");
+    if (!retention.trim())
+      errs.retention = tr(
+        "Indica la referencia de retención (ej. event-plus-90d).",
+      );
     if (Object.keys(errs).length > 0) {
       setFormErrors(errs);
       return;
@@ -708,7 +737,10 @@ export function FormsPanel({
     bindings[0];
 
   const selectedPreviewId =
-    previewVersionId || previewVersion?.id || activeBinding?.form_version_id || "";
+    previewVersionId ||
+    previewVersion?.id ||
+    activeBinding?.form_version_id ||
+    "";
 
   const previewSelector = (
     <label className="field">
@@ -783,7 +815,11 @@ export function FormsPanel({
         title={tr("Formularios y vínculos")}
         subtitle={tr("Diseña versiones y asócialas a un evento.")}
       >
-        <div className="subtabs" role="tablist" aria-label={tr("Vistas de formularios")}>
+        <div
+          className="subtabs"
+          role="tablist"
+          aria-label={tr("Vistas de formularios")}
+        >
           <button
             type="button"
             role="tab"
@@ -819,10 +855,20 @@ export function FormsPanel({
             <section className="subpanel">
               <div className="subpanel-head">
                 <h3>{tr("Definición de formulario")}</h3>
-                <p>{tr("Crea un formulario base indicando su nombre y propósito.")}</p>
+                <p>
+                  {tr(
+                    "Crea un formulario base indicando su nombre y propósito.",
+                  )}
+                </p>
               </div>
-              <form onSubmit={createDefinition} noValidate className="form-grid">
-                <label className={`field ${formErrors.name ? "has-error" : ""}`}>
+              <form
+                onSubmit={createDefinition}
+                noValidate
+                className="form-grid"
+              >
+                <label
+                  className={`field ${formErrors.name ? "has-error" : ""}`}
+                >
                   {tr("Nombre del formulario")}
                   <input
                     required
@@ -861,7 +907,11 @@ export function FormsPanel({
             <section className="subpanel">
               <div className="subpanel-head">
                 <h3>{tr("Versiones y campos")}</h3>
-                <p>{tr("Selecciona un formulario existente para diseñar o publicar una versión.")}</p>
+                <p>
+                  {tr(
+                    "Selecciona un formulario existente para diseñar o publicar una versión.",
+                  )}
+                </p>
               </div>
               <label className="field">
                 {tr("Formulario")}
@@ -882,350 +932,394 @@ export function FormsPanel({
                 </select>
               </label>
 
-        {canWrite && formId && (
-          <form onSubmit={createDraft} noValidate className="form-grid">
-            <label className={`field ${formErrors.fieldName ? "has-error" : ""}`}>
-              {tr("Identificador del campo")}
-              <input
-                required
-                pattern="[a-z][a-z0-9_]*"
-                value={fieldName}
-                aria-invalid={Boolean(formErrors.fieldName)}
-                onChange={(e) => {
-                  setFormErrors((prev) => ({ ...prev, fieldName: "" }));
-                  setFieldName(e.target.value);
-                }}
-              />
-              {formErrors.fieldName && (
-                <span className="field-error" role="alert">
-                  <AlertCircle size={14} /> {formErrors.fieldName}
-                </span>
+              {canWrite && formId && (
+                <form onSubmit={createDraft} noValidate className="form-grid">
+                  <label
+                    className={`field ${formErrors.fieldName ? "has-error" : ""}`}
+                  >
+                    {tr("Identificador del campo")}
+                    <input
+                      required
+                      pattern="[a-z][a-z0-9_]*"
+                      value={fieldName}
+                      aria-invalid={Boolean(formErrors.fieldName)}
+                      onChange={(e) => {
+                        setFormErrors((prev) => ({ ...prev, fieldName: "" }));
+                        setFieldName(e.target.value);
+                      }}
+                    />
+                    {formErrors.fieldName && (
+                      <span className="field-error" role="alert">
+                        <AlertCircle size={14} /> {formErrors.fieldName}
+                      </span>
+                    )}
+                  </label>
+                  <label
+                    className={`field ${formErrors.fieldTitle ? "has-error" : ""}`}
+                  >
+                    {tr("Etiqueta del campo")}
+                    <input
+                      required
+                      value={fieldTitle}
+                      aria-invalid={Boolean(formErrors.fieldTitle)}
+                      onChange={(e) => {
+                        setFormErrors((prev) => ({ ...prev, fieldTitle: "" }));
+                        setFieldTitle(e.target.value);
+                      }}
+                    />
+                    {formErrors.fieldTitle && (
+                      <span className="field-error" role="alert">
+                        <AlertCircle size={14} /> {formErrors.fieldTitle}
+                      </span>
+                    )}
+                  </label>
+                  <label className="field">
+                    {tr("Tipo de campo")}
+                    <select
+                      value={fieldType}
+                      onChange={(e) => setFieldType(e.target.value)}
+                    >
+                      <option value="string">Texto</option>
+                      <option value="number">Número</option>
+                      <option value="integer">Entero</option>
+                      <option value="boolean">Sí/No</option>
+                    </select>
+                  </label>
+                  <label
+                    className={`field ${formErrors.consent ? "has-error" : ""}`}
+                  >
+                    {tr("Texto de consentimiento")}
+                    <textarea
+                      required
+                      value={consent}
+                      aria-invalid={Boolean(formErrors.consent)}
+                      onChange={(e) => {
+                        setFormErrors((prev) => ({ ...prev, consent: "" }));
+                        setConsent(e.target.value);
+                      }}
+                    />
+                    {formErrors.consent && (
+                      <span className="field-error" role="alert">
+                        <AlertCircle size={14} /> {formErrors.consent}
+                      </span>
+                    )}
+                  </label>
+                  <label
+                    className={`field ${formErrors.consentVersion ? "has-error" : ""}`}
+                  >
+                    {tr("Versión del consentimiento")}
+                    <input
+                      required
+                      value={consentVersion}
+                      aria-invalid={Boolean(formErrors.consentVersion)}
+                      onChange={(e) => {
+                        setFormErrors((prev) => ({
+                          ...prev,
+                          consentVersion: "",
+                        }));
+                        setConsentVersion(e.target.value);
+                      }}
+                    />
+                    {formErrors.consentVersion && (
+                      <span className="field-error" role="alert">
+                        <AlertCircle size={14} /> {formErrors.consentVersion}
+                      </span>
+                    )}
+                  </label>
+                  <label
+                    className={`field ${formErrors.policyPurpose ? "has-error" : ""}`}
+                  >
+                    {tr("Finalidad del campo")}
+                    <input
+                      required
+                      value={policyPurpose}
+                      aria-invalid={Boolean(formErrors.policyPurpose)}
+                      onChange={(e) => {
+                        setFormErrors((prev) => ({
+                          ...prev,
+                          policyPurpose: "",
+                        }));
+                        setPolicyPurpose(e.target.value);
+                      }}
+                    />
+                    {formErrors.policyPurpose && (
+                      <span className="field-error" role="alert">
+                        <AlertCircle size={14} /> {formErrors.policyPurpose}
+                      </span>
+                    )}
+                  </label>
+                  <label className="field">
+                    {tr("Clasificación")}
+                    <select
+                      value={classification}
+                      onChange={(e) => setClassification(e.target.value)}
+                    >
+                      {[
+                        "publica",
+                        "interna",
+                        "confidencial",
+                        "restringida",
+                      ].map((x) => (
+                        <option key={x}>{x}</option>
+                      ))}
+                    </select>
+                    {["confidencial", "restringida"].includes(
+                      classification,
+                    ) && (
+                      <small role="status">
+                        {tr(
+                          "Campo de riesgo: revisa la política y el consentimiento.",
+                        )}
+                      </small>
+                    )}
+                  </label>
+                  <label
+                    className={`field ${formErrors.retention ? "has-error" : ""}`}
+                  >
+                    {tr("Referencia de retención")}
+                    <input
+                      required
+                      value={retention}
+                      aria-invalid={Boolean(formErrors.retention)}
+                      onChange={(e) => {
+                        setFormErrors((prev) => ({ ...prev, retention: "" }));
+                        setRetention(e.target.value);
+                      }}
+                    />
+                    {formErrors.retention && (
+                      <span className="field-error" role="alert">
+                        <AlertCircle size={14} /> {formErrors.retention}
+                      </span>
+                    )}
+                  </label>
+                  <div className="field wide">
+                    <strong>{tr("Campos incluidos en el borrador")}</strong>
+                    {extraFields.map((field, index) => (
+                      <small key={field.name}>
+                        {index + 1}. {field.title} · {field.name} ({field.type})
+                      </small>
+                    ))}
+                    {fieldName && fieldTitle && (
+                      <small>
+                        {extraFields.length + 1}. {fieldTitle} · {fieldName} (
+                        {fieldType})
+                      </small>
+                    )}
+                  </div>
+                  <div className="form-actions">
+                    <button className="button primary" disabled={busy}>
+                      {tr("Crear versión borrador")}
+                    </button>
+                    <button
+                      type="button"
+                      className="button secondary"
+                      onClick={addField}
+                    >
+                      {tr("Agregar campo a la vista previa")}
+                    </button>
+                  </div>
+                </form>
               )}
-            </label>
-            <label className={`field ${formErrors.fieldTitle ? "has-error" : ""}`}>
-              {tr("Etiqueta del campo")}
-              <input
-                required
-                value={fieldTitle}
-                aria-invalid={Boolean(formErrors.fieldTitle)}
-                onChange={(e) => {
-                  setFormErrors((prev) => ({ ...prev, fieldTitle: "" }));
-                  setFieldTitle(e.target.value);
-                }}
-              />
-              {formErrors.fieldTitle && (
-                <span className="field-error" role="alert">
-                  <AlertCircle size={14} /> {formErrors.fieldTitle}
-                </span>
-              )}
-            </label>
-            <label className="field">
-              {tr("Tipo de campo")}
-              <select
-                value={fieldType}
-                onChange={(e) => setFieldType(e.target.value)}
-              >
-                <option value="string">Texto</option>
-                <option value="number">Número</option>
-                <option value="integer">Entero</option>
-                <option value="boolean">Sí/No</option>
-              </select>
-            </label>
-            <label className={`field ${formErrors.consent ? "has-error" : ""}`}>
-              {tr("Texto de consentimiento")}
-              <textarea
-                required
-                value={consent}
-                aria-invalid={Boolean(formErrors.consent)}
-                onChange={(e) => {
-                  setFormErrors((prev) => ({ ...prev, consent: "" }));
-                  setConsent(e.target.value);
-                }}
-              />
-              {formErrors.consent && (
-                <span className="field-error" role="alert">
-                  <AlertCircle size={14} /> {formErrors.consent}
-                </span>
-              )}
-            </label>
-            <label className={`field ${formErrors.consentVersion ? "has-error" : ""}`}>
-              {tr("Versión del consentimiento")}
-              <input
-                required
-                value={consentVersion}
-                aria-invalid={Boolean(formErrors.consentVersion)}
-                onChange={(e) => {
-                  setFormErrors((prev) => ({ ...prev, consentVersion: "" }));
-                  setConsentVersion(e.target.value);
-                }}
-              />
-              {formErrors.consentVersion && (
-                <span className="field-error" role="alert">
-                  <AlertCircle size={14} /> {formErrors.consentVersion}
-                </span>
-              )}
-            </label>
-            <label className={`field ${formErrors.policyPurpose ? "has-error" : ""}`}>
-              {tr("Finalidad del campo")}
-              <input
-                required
-                value={policyPurpose}
-                aria-invalid={Boolean(formErrors.policyPurpose)}
-                onChange={(e) => {
-                  setFormErrors((prev) => ({ ...prev, policyPurpose: "" }));
-                  setPolicyPurpose(e.target.value);
-                }}
-              />
-              {formErrors.policyPurpose && (
-                <span className="field-error" role="alert">
-                  <AlertCircle size={14} /> {formErrors.policyPurpose}
-                </span>
-              )}
-            </label>
-            <label className="field">
-              {tr("Clasificación")}
-              <select
-                value={classification}
-                onChange={(e) => setClassification(e.target.value)}
-              >
-                {["publica", "interna", "confidencial", "restringida"].map(
-                  (x) => (
-                    <option key={x}>{x}</option>
-                  ),
-                )}
-              </select>
-              {["confidencial", "restringida"].includes(classification) && (
-                <small role="status">
-                  {tr(
-                    "Campo de riesgo: revisa la política y el consentimiento.",
+
+              {formId && (
+                <>
+                  <label className="field">
+                    {tr("Versión")}
+                    <select
+                      aria-label={tr("Versión")}
+                      value={versionId}
+                      onChange={(e) => {
+                        setVersionId(e.target.value);
+                        setDraftEditor(null);
+                      }}
+                    >
+                      <option value="">{tr("Selecciona una opción")}</option>
+                      {versions.map((v) => (
+                        <option key={v.id} value={v.id}>
+                          v{v.version_number} · {v.status}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {canWrite && selected?.status === "draft" && (
+                    <button
+                      type="button"
+                      className="button secondary"
+                      disabled={busy}
+                      onClick={() => void editDraft()}
+                    >
+                      {tr("Editar borrador")}
+                    </button>
                   )}
-                </small>
+                  {selected?.status === "draft" && canPublish && (
+                    <button
+                      type="button"
+                      className="button primary"
+                      disabled={busy}
+                      onClick={() => void publish()}
+                    >
+                      {tr("Validar y publicar formulario")}
+                    </button>
+                  )}
+                </>
               )}
-            </label>
-            <label className={`field ${formErrors.retention ? "has-error" : ""}`}>
-              {tr("Referencia de retención")}
-              <input
-                required
-                value={retention}
-                aria-invalid={Boolean(formErrors.retention)}
-                onChange={(e) => {
-                  setFormErrors((prev) => ({ ...prev, retention: "" }));
-                  setRetention(e.target.value);
-                }}
-              />
-              {formErrors.retention && (
-                <span className="field-error" role="alert">
-                  <AlertCircle size={14} /> {formErrors.retention}
-                </span>
-              )}
-            </label>
-            <div className="field wide">
-              <strong>{tr("Campos incluidos en el borrador")}</strong>
-              {extraFields.map((field, index) => (
-                <small key={field.name}>
-                  {index + 1}. {field.title} · {field.name} ({field.type})
-                </small>
-              ))}
-              {fieldName && fieldTitle && (
-                <small>
-                  {extraFields.length + 1}. {fieldTitle} · {fieldName} (
-                  {fieldType})
-                </small>
-              )}
-            </div>
-            <div className="form-actions">
-              <button className="button primary" disabled={busy}>
-                {tr("Crear versión borrador")}
-              </button>
-              <button
-                type="button"
-                className="button secondary"
-                onClick={addField}
-              >
-                {tr("Agregar campo a la vista previa")}
-              </button>
-            </div>
-          </form>
-        )}
 
-        {formId && (
-          <>
-            <label className="field">
-              {tr("Versión")}
-              <select
-                aria-label={tr("Versión")}
-                value={versionId}
-                onChange={(e) => {
-                  setVersionId(e.target.value);
-                  setDraftEditor(null);
-                }}
-              >
-                <option value="">{tr("Selecciona una opción")}</option>
-                {versions.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    v{v.version_number} · {v.status}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {canWrite && selected?.status === "draft" && (
-              <button
-                type="button"
-                className="button secondary"
-                disabled={busy}
-                onClick={() => void editDraft()}
-              >
-                {tr("Editar borrador")}
-              </button>
-            )}
-            {selected?.status === "draft" && canPublish && (
-              <button
-                type="button"
-                className="button primary"
-                disabled={busy}
-                onClick={() => void publish()}
-              >
-                {tr("Validar y publicar formulario")}
-              </button>
-            )}
-          </>
-        )}
-
-        {draftEditor && (
-          <form onSubmit={saveDraft} className="form-grid">
-            {(
-              ["schema", "ui_schema", "consent", "field_policies"] as const
-            ).map((key) => (
-              <label className="field" key={key}>
-                {key}
-                <textarea
-                  aria-label={key}
-                  rows={7}
-                  required
-                  value={draftEditor[key]}
-                  onChange={(e) =>
-                    setDraftEditor({ ...draftEditor, [key]: e.target.value })
-                  }
-                />
-              </label>
-            ))}
-            <div className="form-actions">
-              <button className="button primary" disabled={busy}>
-                {tr("Guardar borrador")}
-              </button>
-            </div>
-          </form>
-        )}
+              {draftEditor && (
+                <form onSubmit={saveDraft} className="form-grid">
+                  {(
+                    [
+                      "schema",
+                      "ui_schema",
+                      "consent",
+                      "field_policies",
+                    ] as const
+                  ).map((key) => (
+                    <label className="field" key={key}>
+                      {key}
+                      <textarea
+                        aria-label={key}
+                        rows={7}
+                        required
+                        value={draftEditor[key]}
+                        onChange={(e) =>
+                          setDraftEditor({
+                            ...draftEditor,
+                            [key]: e.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                  ))}
+                  <div className="form-actions">
+                    <button className="button primary" disabled={busy}>
+                      {tr("Guardar borrador")}
+                    </button>
+                  </div>
+                </form>
+              )}
             </section>
 
-        {selectedEventId && ((selected?.status === "published") || bindings.length > 0) && (
-          <section className="subpanel">
-            <div className="subpanel-head">
-              <h3>{tr("Vínculo con el evento")}</h3>
-              <p>{tr("Asocia una versión publicada al evento de trabajo o gestiona los vínculos activos.")}</p>
-            </div>
+            {selectedEventId &&
+              (selected?.status === "published" || bindings.length > 0) && (
+                <section className="subpanel">
+                  <div className="subpanel-head">
+                    <h3>{tr("Vínculo con el evento")}</h3>
+                    <p>
+                      {tr(
+                        "Asocia una versión publicada al evento de trabajo o gestiona los vínculos activos.",
+                      )}
+                    </p>
+                  </div>
 
-        {canWrite && selected?.status === "published" && selectedEventId && (
-          <div className="form-grid">
-            <label className="field">
-              {tr("Estado inicial")}
-              <select
-                value={bindingStatus}
-                onChange={(e) => setBindingStatus(e.target.value)}
-              >
-                <option value="open">{tr("Abierto")}</option>
-                <option value="scheduled">{tr("Programado")}</option>
-              </select>
-            </label>
-            <label className="field">
-              {tr("Apertura")}
-              <input
-                type="datetime-local"
-                value={opens}
-                onChange={(e) => setOpens(e.target.value)}
-              />
-            </label>
-            <label className="field">
-              {tr("Cierre")}
-              <input
-                type="datetime-local"
-                value={closes}
-                onChange={(e) => setCloses(e.target.value)}
-              />
-            </label>
-            <div className="form-actions">
-              <button
-                className="button secondary"
-                disabled={busy || !opens || !closes}
-                onClick={() => void bind()}
-              >
-                {tr("Vincular al evento")}
-              </button>
-            </div>
-          </div>
-        )}
+                  {canWrite &&
+                    selected?.status === "published" &&
+                    selectedEventId && (
+                      <div className="form-grid">
+                        <label className="field">
+                          {tr("Estado inicial")}
+                          <select
+                            value={bindingStatus}
+                            onChange={(e) => setBindingStatus(e.target.value)}
+                          >
+                            <option value="open">{tr("Abierto")}</option>
+                            <option value="scheduled">
+                              {tr("Programado")}
+                            </option>
+                          </select>
+                        </label>
+                        <label className="field">
+                          {tr("Apertura")}
+                          <input
+                            type="datetime-local"
+                            value={opens}
+                            onChange={(e) => setOpens(e.target.value)}
+                          />
+                        </label>
+                        <label className="field">
+                          {tr("Cierre")}
+                          <input
+                            type="datetime-local"
+                            value={closes}
+                            onChange={(e) => setCloses(e.target.value)}
+                          />
+                        </label>
+                        <div className="form-actions">
+                          <button
+                            className="button secondary"
+                            disabled={busy || !opens || !closes}
+                            onClick={() => void bind()}
+                          >
+                            {tr("Vincular al evento")}
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
-        {selectedEventId && bindings.length > 0 && (
-          <div className="form-grid">
-            <label className="field">
-              {tr("Vínculo")}
-              <select
-                value={bindingId}
-                onChange={(e) => setBindingId(e.target.value)}
-              >
-                <option value="">{tr("Selecciona una opción")}</option>
-                {bindings
-                  .filter(
-                    (b) => b.status === "open" || b.status === "scheduled",
-                  )
-                  .map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.purpose} · {b.status} · {b.id}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            {canWrite && (
-              <>
-                <label className="field">
-                  {tr("Motivo")}
-                  <input
-                    value={reason}
-                    onChange={(e) => setReason(e.target.value)}
-                  />
-                </label>
-                {bindings.find((b) => b.id === bindingId)?.status ===
-                  "scheduled" && (
-                  <button
-                    className="button secondary"
-                    disabled={busy}
-                    onClick={() => void transition("open")}
-                  >
-                    {tr("Abrir vínculo")}
-                  </button>
-                )}
-                {bindings.find((b) => b.id === bindingId)?.status === "open" && (
-                  <button
-                    className="button secondary"
-                    disabled={busy || !reason.trim()}
-                    onClick={() => void close()}
-                  >
-                    {tr("Cerrar vínculo")}
-                  </button>
-                )}
-                <button
-                  className="button secondary"
-                  disabled={busy || !bindingId || !reason.trim()}
-                  onClick={() => void transition("cancel")}
-                >
-                  {tr("Cancelar vínculo")}
-                </button>
-              </>
-            )}
-          </div>
-        )}
-          </section>
-        )}
+                  {selectedEventId && bindings.length > 0 && (
+                    <div className="form-grid">
+                      <label className="field">
+                        {tr("Vínculo")}
+                        <select
+                          value={bindingId}
+                          onChange={(e) => setBindingId(e.target.value)}
+                        >
+                          <option value="">
+                            {tr("Selecciona una opción")}
+                          </option>
+                          {bindings
+                            .filter(
+                              (b) =>
+                                b.status === "open" || b.status === "scheduled",
+                            )
+                            .map((b) => (
+                              <option key={b.id} value={b.id}>
+                                {b.purpose} · {b.status} · {b.id}
+                              </option>
+                            ))}
+                        </select>
+                      </label>
+                      {canWrite && (
+                        <>
+                          <label className="field">
+                            {tr("Motivo")}
+                            <input
+                              value={reason}
+                              onChange={(e) => setReason(e.target.value)}
+                            />
+                          </label>
+                          {bindings.find((b) => b.id === bindingId)?.status ===
+                            "scheduled" && (
+                            <button
+                              className="button secondary"
+                              disabled={busy}
+                              onClick={() => void transition("open")}
+                            >
+                              {tr("Abrir vínculo")}
+                            </button>
+                          )}
+                          {bindings.find((b) => b.id === bindingId)?.status ===
+                            "open" && (
+                            <button
+                              className="button secondary"
+                              disabled={busy || !reason.trim()}
+                              onClick={() => void close()}
+                            >
+                              {tr("Cerrar vínculo")}
+                            </button>
+                          )}
+                          <button
+                            className="button secondary"
+                            disabled={busy || !bindingId || !reason.trim()}
+                            onClick={() => void transition("cancel")}
+                          >
+                            {tr("Cancelar vínculo")}
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </section>
+              )}
           </div>
         )}
       </Panel>

@@ -537,7 +537,9 @@ export function EventsModule({
   };
 
   const archiveResource = async (path: string, row: RecordData) => {
-    const label = String(row.name || row.display_name || row.title || row.id || "");
+    const label = String(
+      row.name || row.display_name || row.title || row.id || "",
+    );
     setDialog({
       title: tr("Confirmar archivo"),
       description: `${tr("¿Archivar")} "${label}"? ${tr("Dejará de aparecer en las listas activas y no podrá asignarse a nuevas sesiones.")}`,
@@ -613,12 +615,11 @@ export function EventsModule({
         <div className="page-heading">
           <div>
             <div className="overline">
-              <span className="overline-line" /> {tr("CONFIGURACIÓN DE EVENTOS")}
+              <span className="overline-line" />{" "}
+              {tr("CONFIGURACIÓN DE EVENTOS")}
             </div>
             <h1>
-              {section === "overview"
-                ? tr("Resumen")
-                : tr(currentNav.label)}
+              {section === "overview" ? tr("Resumen") : tr(currentNav.label)}
             </h1>
             <p>
               {section === "overview"
@@ -836,10 +837,15 @@ export function EventsModule({
             }
           >
             <div className="stack">
-              {output.data && typeof output.data === "object" && !Array.isArray(output.data) ? (
+              {output.data &&
+              typeof output.data === "object" &&
+              !Array.isArray(output.data) ? (
                 <div className="detail-grid">
                   {Object.entries(output.data as Record<string, unknown>)
-                    .filter(([, v]) => v !== null && v !== undefined && typeof v !== "object")
+                    .filter(
+                      ([, v]) =>
+                        v !== null && v !== undefined && typeof v !== "object",
+                    )
                     .slice(0, 8)
                     .map(([k, v]) => {
                       const labels: Record<string, string> = {
