@@ -14,11 +14,11 @@ export function loadWorkerConfig(env) {
     onsiteInternalToken: (env.ONSITE_INTERNAL_TOKEN || 'nexo-internal-sync').trim(),
     httpTimeoutMs: Number(env.BROKER_HTTP_TIMEOUT_MS || 5000),
   };
+  if (config.brokerMode !== 'http' && !config.tenants.length) {
+    throw new Error('WORKER_TENANT_IDS must list authorized tenant UUIDs.');
+  }
   if (config.brokerMode !== 'simulator' && config.brokerMode !== 'http') {
     throw new Error('BROKER_MODE must select an available publisher adapter.');
-  }
-  if (config.brokerMode === 'simulator' && !config.tenants.length) {
-    throw new Error('WORKER_TENANT_IDS must list authorized tenant UUIDs.');
   }
   for (const tenant of config.tenants) {
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenant)) {
