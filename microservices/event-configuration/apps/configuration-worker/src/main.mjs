@@ -3,6 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { OutboxRelay } from './application/outbox-relay.mjs';
 import { loadDatabaseConfig, loadWorkerConfig } from './infrastructure/config/worker-config.mjs';
+import { HttpBroker } from './infrastructure/messaging/http-broker.mjs';
 import { SimulatedBroker } from './infrastructure/messaging/simulated-broker.mjs';
 import { OutboxRepository } from './infrastructure/persistence/outbox-repository.mjs';
 import { verifyWorkerAccess } from './infrastructure/persistence/verify-worker-access.mjs';
@@ -14,9 +15,13 @@ const pool = new Pool(loadDatabaseConfig(process.env));
 const workerId = `${process.env.HOSTNAME || 'configuration-worker'}:${process.pid}:${randomUUID()}`;
 const heartbeatFile = process.env.WORKER_HEARTBEAT_FILE || '/tmp/worker-heartbeat';
 const updateHeartbeat = () => writeFile(heartbeatFile, String(Date.now()), 'utf8');
+const repository = new OutboxRepository(pool, config);
+const broker = config.brokerMode === 'http'
+  ? new HttpBroker(repository, config)
+  : new SimulatedBroker(config);
 const relay = new OutboxRelay(
-  new OutboxRepository(pool, config),
-  new SimulatedBroker(config),
+  repository,
+  broker,
   config,
   workerId,
   console,

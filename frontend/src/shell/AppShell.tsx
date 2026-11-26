@@ -28,7 +28,7 @@ export function AppShell(){
  },[serverSidebar]);
  const modules=useMemo(()=>{const capable=visibleModules(capabilities);return serverSidebar?capable.filter(module=>serverSidebar.items.some(item=>item.id===module.id)||(demoEvents&&module.id==='events')):capable},[serverSidebar,capabilities]);
  if(participationRoute&&publicModule){const publicContext:ModuleContext={version:1,tenantId:'',workspaceId:'',capabilities:[],apiBaseUrl:import.meta.env.VITE_PARTICIPATION_API_URL||'http://localhost:8084',theme,route:location.pathname};return <div className="nx-public-module-shell"><main id="main-content" className="nx-public-module-content"><ModuleLoader module={publicModule} context={publicContext}/></main></div>}
- if((!session||!authenticated)&&homeRoute)return <HomePage onAccess={()=>navigate('/login')}/>;
+ if((!session||!authenticated)&&homeRoute)return <HomePage onAccess={()=>navigate('/login')} onSelectEvent={event=>navigate(event.slug?`/participation?site=default&event=${encodeURIComponent(event.slug)}`:'/login')}/>;
  if(!session||!authenticated)return <AuthPage onAuthenticated={value=>{setSession(value);setActiveTenantId(value.tenants[0]?.id||'');navigate('/')}}/>;
  const tenant=session.tenants.find(item=>item.id===activeTenantId)||session.tenants[0];const context:ModuleContext={version:1,tenantId:tenant?.id||'',workspaceId:tenant?.id||'',capabilities,apiBaseUrl:import.meta.env.VITE_TEAM4_API_URL||'http://localhost:8082',theme,route:location.pathname};const active=location.pathname==='/'?'overview':findModuleForRoute(location.pathname,modules)?.id||'';
  const signOut=async()=>{try{await logout(session.access_token)}catch{}clearSession();setSession(null);navigate('/login')};

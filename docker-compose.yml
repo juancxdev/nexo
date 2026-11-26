@@ -38,6 +38,7 @@ services:
       CORE_JWKS_URL: http://core-api:8081/.well-known/jwks.json
       NEXO_JWT_ISSUER: http://core-api:8081
       NEXO_JWT_AUDIENCE: nexo-services
+      ONSITE_INTERNAL_TOKEN: ${ONSITE_INTERNAL_TOKEN:-nexo-internal-sync}
       CORS_ALLOWED_ORIGINS: http://localhost:5174,http://127.0.0.1:5174
     ports: ["8082:8082"]
   participation-api:
@@ -50,6 +51,7 @@ services:
       CORS_ALLOWED_ORIGINS: http://localhost:5174,http://127.0.0.1:5174
       EVENT_OPERATIONS_URL: http://event-operations-api:8083
       NEXO_INTERNAL_SERVICE_TOKEN: nexo-local-service-only
+      PARTICIPATION_INTERNAL_TOKEN: ${PARTICIPATION_INTERNAL_TOKEN:-nexo-internal-sync}
     ports: ["8084:8084"]
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8084/health/ready"]
@@ -119,9 +121,13 @@ services:
       POSTGRES_DB: nexo
       POSTGRES_USER: configuration_app
       POSTGRES_PASSWORD: configuration-app-local-only
-      BROKER_MODE: simulator
+      BROKER_MODE: ${WORKER_BROKER_MODE:-http}
+      PARTICIPATION_INTERNAL_URL: http://participation-api:8084
+      PARTICIPATION_INTERNAL_TOKEN: ${PARTICIPATION_INTERNAL_TOKEN:-nexo-internal-sync}
+      ONSITE_INTERNAL_URL: http://onsite-operations-api:8082
+      ONSITE_INTERNAL_TOKEN: ${ONSITE_INTERNAL_TOKEN:-nexo-internal-sync}
       WORKER_HEARTBEAT_FILE: /tmp/worker-heartbeat
-      WORKER_TENANT_IDS: 0194eb00-0000-7000-8000-000000000001,0194eb00-0000-7000-8000-000000000002
+      WORKER_TENANT_IDS: 0194eb00-0000-7000-8000-000000000001,0194eb00-0000-7000-8000-000000000002,932db5ff-ea82-4917-a4b7-474444966757
       WORKER_POLL_INTERVAL_MS: "1000"
       WORKER_BATCH_SIZE: "10"
       WORKER_LEASE_SECONDS: "60"

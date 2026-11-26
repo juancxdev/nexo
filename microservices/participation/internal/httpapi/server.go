@@ -87,6 +87,7 @@ func (s *Server) routes() {
 	a.Get("/participation/public/v2/sites/:site/events/:event/challenge", s.protectPublic(false, s.challenge))
 	a.Post("/participation/public/v2/sites/:site/events/:event/registrations", s.protectPublic(true, s.register))
 	a.Get("/participation/internal/v1/security/metrics", s.securityMetrics)
+	a.Post("/participation/internal/v1/releases", s.ingestRelease)
 	a.Get("/participation/self/v1/registrations/:id/ticket", s.ticket)
 	a.Get("/participation/self/v1/registrations/:id/credential", s.credential)
 	a.Post("/participation/self/v1/registrations/:id/cancel", s.cancelRegistration)
@@ -566,4 +567,78 @@ func ticketSigningKey() (string, ed25519.PrivateKey) {
 }
 func problem(c fiber.Ctx, status int, code, detail string) error {
 	return c.Status(status).Type("application/problem+json").JSON(fiber.Map{"type": "https://errors.example.pe/" + code, "title": code, "status": status, "code": code, "detail": detail})
+}
+
+type releaseIngestInput struct {
+	SiteSlug        string          `json:"site_slug"`
+	EventSlug       string          `json:"event_slug"`
+	EventID         string          `json:"event_id"`
+	EventTitle      string          `json:"event_title"`
+	FormVersionID   string          `json:"form_version_id"`
+	ConsentVersion  string          `json:"consent_version"`
+	BindingState    string          `json:"binding_state"`
+	ConsentText     string          `json:"consent_text"`
+	Schema          json.RawMessage `json:"schema"`
+	Capacity        int             `json:"capacity"`
+	WaitlistEnabled bool            `json:"waitlist_enabled"`
+}
+
+func (s *Server) ingestRelease(c fiber.Ctx) error {
+	expected := getenv("PARTICIPATION_INTERNAL_TOKEN", "nexo-internal-sync")
+	if strings.TrimSpace(c.Get("X-Internal-Token")) != expected {
+		return problem(c, 401, "unauthorized", "token interno inválido")
+	}
+	var in releaseIngestInput
+	if err := json.Unmarshal(c.Body(), &in); err != nil || in.EventID == "" || in.EventSlug == "" || in.FormVersionID == "" {
+		return problem(c, 400, "invalid_release", "datos de release incompletos")
+	}
+	if in.SiteSlug == "" {
+		in.SiteSlug = "nexo"
+	}
+	if in.ConsentVersion == "" {
+		in.ConsentVersion = "v1.0"
+	}
+	switch strings.ToLower(strings.TrimSpace(in.BindingState)) {
+	case "scheduled", "open", "closed", "cancelled":
+		in.BindingState = strings.ToLower(strings.TrimSpace(in.BindingState))
+	default:
+		in.BindingState = "open"
+	}
+	if _, err := uuid.Parse(in.FormVersionID); err != nil {
+		in.FormVersionID = uuid.NewSHA1(uuid.NameSpaceOID, []byte(in.EventID+":"+in.FormVersionID)).String()
+	}
+	if in.Capacity <= 0 {
+		in.Capacity = 200
+	}
+	if len(in.Schema) == 0 {
+		in.Schema = json.RawMessage(`{}`)
+	}
+	_, err := s.DB.Exec(c.Context(), `
+		INSERT INTO participation.forms (
+			id, site_slug, event_slug, event_id, event_title, form_version_id,
+			consent_version, binding_state, consent_text, schema, capacity,
+			confirmed_count, remaining, waitlist_enabled
+		) VALUES (
+			$1::uuid, $2, $3, $4, $5, $6::uuid,
+			$7, $8, $9, $10::jsonb, $11,
+			0, $11, $12
+		)
+		ON CONFLICT (site_slug, event_slug) DO UPDATE SET
+			event_id = EXCLUDED.event_id,
+			event_title = EXCLUDED.event_title,
+			form_version_id = EXCLUDED.form_version_id,
+			consent_version = EXCLUDED.consent_version,
+			binding_state = EXCLUDED.binding_state,
+			consent_text = EXCLUDED.consent_text,
+			schema = EXCLUDED.schema,
+			capacity = EXCLUDED.capacity,
+			remaining = GREATEST(0, EXCLUDED.capacity - participation.forms.confirmed_count),
+			waitlist_enabled = EXCLUDED.waitlist_enabled`,
+		uuid.NewString(), in.SiteSlug, in.EventSlug, in.EventID, in.EventTitle, in.FormVersionID,
+		in.ConsentVersion, in.BindingState, in.ConsentText, string(in.Schema), in.Capacity, in.WaitlistEnabled,
+	)
+	if err != nil {
+		return problem(c, 503, "persistence_unavailable", "no se pudo proyectar el formulario del release")
+	}
+	return c.JSON(fiber.Map{"status": "projected", "site_slug": in.SiteSlug, "event_slug": in.EventSlug})
 }

@@ -18,6 +18,7 @@ import { eventPermissions } from "./capabilities";
 import { FormsPanel } from "./forms/FormsPanel";
 import {
   Badge,
+  Detail,
   Empty,
   FormDialog,
   Panel,
@@ -149,7 +150,7 @@ export function EventsModule({
       await loadEvents();
       if (contextRef.current !== currentContext) return;
       setConnection("online");
-      if (permissions.write) {
+      if (permissions.read) {
         const [venueData, speakerData] = await Promise.all([
           loadAll(request, "/venues"),
           loadAll(request, "/speakers"),
@@ -191,7 +192,7 @@ export function EventsModule({
   }, [refresh]);
 
   const refreshAgenda = useCallback(async () => {
-    if (!selectedId || !permissions.write) {
+    if (!selectedId || !permissions.read) {
       setPrograms([]);
       setSessions([]);
       return;
@@ -212,7 +213,7 @@ export function EventsModule({
     } catch (error) {
       showError(error);
     }
-  }, [selectedId, request, currentContext, permissions.write]);
+  }, [selectedId, request, currentContext, permissions.read]);
 
   useEffect(() => {
     void refreshAgenda();
@@ -536,26 +537,24 @@ export function EventsModule({
   };
 
   const archiveResource = async (path: string, row: RecordData) => {
-    if (
-      !window.confirm(
-        tr(
-          "¿Archivar este recurso? Esta acción puede afectar su disponibilidad.",
-        ),
-      )
-    ) {
-      return;
-    }
-    try {
-      await run(
-        path,
-        "DELETE",
-        undefined,
-        row.revision,
-        tr("Recurso archivado."),
-      );
-    } catch (error) {
-      showError(error);
-    }
+    const label = String(
+      row.name || row.display_name || row.title || row.id || "",
+    );
+    setDialog({
+      title: tr("Confirmar archivo"),
+      description: `${tr("¿Archivar")} "${label}"? ${tr("Dejará de aparecer en las listas activas y no podrá asignarse a nuevas sesiones.")}`,
+      fields: [],
+      button: tr("Confirmar archivo"),
+      submit: async () => {
+        await run(
+          path,
+          "DELETE",
+          undefined,
+          row.revision,
+          tr("Recurso archivado."),
+        );
+      },
+    });
   };
 
   const filtered = useMemo(
@@ -616,16 +615,15 @@ export function EventsModule({
         <div className="page-heading">
           <div>
             <div className="overline">
-              <span className="overline-line" /> {tr("TU ESPACIO DE EVENTOS")}
+              <span className="overline-line" />{" "}
+              {tr("CONFIGURACIÓN DE EVENTOS")}
             </div>
             <h1>
-              {section === "overview"
-                ? tr("Todo comienza aquí.")
-                : tr(currentNav.label)}
+              {section === "overview" ? tr("Resumen") : tr(currentNav.label)}
             </h1>
             <p>
               {section === "overview"
-                ? tr("Una vista clara de todo lo que estás preparando.")
+                ? tr("Estado general de eventos, espacios y ponentes.")
                 : (
                     {
                       events: tr(
@@ -725,6 +723,7 @@ export function EventsModule({
         {section === "speakers" && (
           <SpeakersSection
             speakers={speakers}
+            isReader={isReader}
             request={request}
             inspect={inspect}
             setDialog={setDialog}
@@ -817,7 +816,6 @@ export function EventsModule({
             selectedPath={selectedPath}
             isReader={isReader}
             request={request}
-            inspect={inspect}
             setDialog={setDialog}
             run={run}
             showError={showError}
@@ -827,7 +825,7 @@ export function EventsModule({
         {output && (
           <Panel
             title={output.title}
-            subtitle={tr("Respuesta de la API del entorno de desarrollo.")}
+            subtitle={tr("Información detallada del registro seleccionado.")}
             action={
               <button
                 className="icon-button"
@@ -838,21 +836,49 @@ export function EventsModule({
               </button>
             }
           >
-            <pre className="output">{JSON.stringify(output.data, null, 2)}</pre>
+            <div className="stack">
+              {output.data &&
+              typeof output.data === "object" &&
+              !Array.isArray(output.data) ? (
+                <div className="detail-grid">
+                  {Object.entries(output.data as Record<string, unknown>)
+                    .filter(
+                      ([, v]) =>
+                        v !== null && v !== undefined && typeof v !== "object",
+                    )
+                    .slice(0, 8)
+                    .map(([k, v]) => {
+                      const labels: Record<string, string> = {
+                        version: tr("Versión"),
+                        text: tr("Texto"),
+                        status: tr("Estado"),
+                        release_version: tr("Versión de publicación"),
+                        published_at: tr("Fecha de publicación"),
+                        effective_at: tr("Fecha efectiva"),
+                        manifest_hash: tr("Huella del manifiesto"),
+                        id: tr("Identificador"),
+                      };
+                      return (
+                        <Detail
+                          key={k}
+                          label={labels[k] || k.replace(/_/g, " ")}
+                          value={String(v)}
+                        />
+                      );
+                    })}
+                </div>
+              ) : null}
+              <details>
+                <summary className="text-action">
+                  {tr("Ver datos técnicos")}
+                </summary>
+                <pre className="output">
+                  {JSON.stringify(output.data, null, 2)}
+                </pre>
+              </details>
+            </div>
           </Panel>
         )}
-
-        <footer>
-          <span>{tr("© Grupo 2 · Configuración de eventos")}</span>
-          <span role="status">
-            {connection === "online"
-              ? tr("API conectada")
-              : connection === "loading"
-                ? tr("Conectando")
-                : tr("API no disponible")}{" "}
-            <span className="footer-dot">●</span>
-          </span>
-        </footer>
       </div>
 
       {dialog && (

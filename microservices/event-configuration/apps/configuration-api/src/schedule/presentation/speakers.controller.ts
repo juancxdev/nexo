@@ -12,7 +12,7 @@ import { SpeakersService } from '../application/speakers.service';
 
 @ApiTags('Schedule - EC-B')
 @UseGuards(AuthGuard)
-@RequireScopes('events:write')
+@RequireScopes('events:write', 'events:read')
 @UsePipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }))
 @Controller()
 export class SpeakersController {
@@ -29,6 +29,7 @@ export class SpeakersController {
   }
 
   @Post('speakers')
+  @RequireScopes('events:write')
   @ApiHeader({ name: 'Idempotency-Key', required: true })
   async create(@Claims() claims: TenantClaims, @Body() dto: SpeakerWriteDto, @Headers('idempotency-key') key: string, @Res() response: Response) {
     const validKey = this.requireKey(key);
@@ -44,12 +45,14 @@ export class SpeakersController {
   get(@Claims() claims: TenantClaims, @Param('id', ParseUUIDPipe) id: string) { return this.service.get(claims, id); }
 
   @Patch('speakers/:id')
+  @RequireScopes('events:write')
   async update(@Claims() claims: TenantClaims, @Param('id', ParseUUIDPipe) id: string, @Headers('if-match') tag: string, @Body() dto: SpeakerPatchDto, @Res() response: Response) {
     const speaker = await this.service.update(claims, id, this.revision(tag), dto);
     response.setHeader('ETag', `"${speaker.revision}"`).status(200).json(speaker);
   }
 
   @Delete('speakers/:id')
+  @RequireScopes('events:write')
   @HttpCode(HttpStatus.NO_CONTENT)
   async archive(@Claims() claims: TenantClaims, @Param('id', ParseUUIDPipe) id: string, @Headers('if-match') tag: string) {
     await this.service.archive(claims, id, this.revision(tag));

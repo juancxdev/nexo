@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { EventsController } from './presentation/events.controller';
+import { PublicEventsController } from './presentation/public-events.controller';
 import { EventsService } from './application/events.service';
 import { EventsRepository } from './infrastructure/persistence/events.repository';
 import { MembershipAdapter } from './infrastructure/adapters/membership.adapter';
@@ -10,7 +11,7 @@ import { selectMembershipReader } from './infrastructure/adapters/membership-sel
 import { selectClaimsProvider } from '../shared/auth/claims-selection';
 
 @Module({
-  controllers: [EventsController],
+  controllers: [EventsController, PublicEventsController],
   providers: [EventsService, EventsRepository, MembershipAdapter, AuthGuard, MockClaimsProvider,
     { provide: EVENTS_REPOSITORY, useExisting: EventsRepository },
     { provide: MEMBERSHIP_READER, useFactory: (mock: MembershipAdapter) => selectMembershipReader(process.env, mock), inject: [MembershipAdapter] },

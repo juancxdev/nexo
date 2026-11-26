@@ -50,9 +50,34 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly fieldErrors: Record<string, string> = {},
   ) {
     super(message);
   }
+}
+
+function parseFieldErrors(payload: unknown): Record<string, string> {
+  if (!isRecordObject(payload) || !Array.isArray(payload.errors)) return {};
+  const map: Record<string, string> = {};
+  for (const item of payload.errors) {
+    if (!isRecordObject(item)) continue;
+    const rawName =
+      typeof item.name === 'string'
+        ? item.name
+        : typeof item.pointer === 'string'
+          ? item.pointer.replace(/^\/body\//, '').replace(/^\//, '').split('.')[0]
+          : '';
+    const text =
+      typeof item.message === 'string'
+        ? item.message
+        : typeof item.reason === 'string'
+          ? item.reason
+          : '';
+    if (rawName && text && !map[rawName]) {
+      map[rawName] = text;
+    }
+  }
+  return map;
 }
 
 export interface EventsRequestOptions {
@@ -157,7 +182,7 @@ export function createEventsTransport(
           : detail !== undefined
             ? String(detail)
             : `Error HTTP ${response.status}`;
-        throw new ApiError(message, response.status);
+        throw new ApiError(message, response.status, parseFieldErrors(payload));
       }
       return payload as T;
     },

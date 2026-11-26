@@ -54,7 +54,11 @@ export class OutboxRelay {
     while (!this.stopping) {
       if (this.onHeartbeat) await this.onHeartbeat();
       let found = false;
-      for (const tenant of this.config.tenants) {
+      const discovered = typeof this.repository.listPendingOrganizations === 'function'
+        ? await this.repository.listPendingOrganizations().catch(() => [])
+        : [];
+      const tenants = Array.from(new Set([...this.config.tenants, ...discovered]));
+      for (const tenant of tenants) {
         if (this.stopping) break;
         const batch = await this.repository.claimBatch(tenant, this.workerId);
         found ||= batch.length > 0;

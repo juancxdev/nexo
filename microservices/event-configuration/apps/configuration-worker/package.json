@@ -5,7 +5,8 @@
   "type": "module",
   "description": "Tenant-scoped transactional outbox relay with local broker simulator",
   "scripts": {
-    "start": "node src/main.mjs"
+    "start": "node src/main.mjs",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "pg": "^8.11.5"

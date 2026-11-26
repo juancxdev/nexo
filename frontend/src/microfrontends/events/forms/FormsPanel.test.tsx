@@ -13,9 +13,10 @@ describe('forms panel',()=>{
   expect(call).toHaveBeenCalledWith('/forms'); expect(el.textContent).toContain('Crear formulario');
   expect(el.textContent).not.toContain('Validar y publicar formulario');
  });
- it('does not query form administration without write permission',async()=>{
+ it('renders read-only forms view without write permission',async()=>{
   const call=vi.fn(async()=>[]); const el=document.createElement('div');document.body.append(el);root=createRoot(el);
   await act(async()=>{root!.render(<FormsPanel transport={{request:call as EventsTransport['request']}} canWrite={false} canPublish={false} contextKey="tenant-a"/>)});
-  expect(call).not.toHaveBeenCalled(); expect(el.textContent).toContain('Sin acceso de escritura');
+  expect(call).toHaveBeenCalledWith('/forms'); expect(el.textContent).toContain('Sin acceso de escritura');
+  expect(el.textContent).not.toContain('Crear formulario');
  });
 });
