@@ -26,6 +26,7 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
   const [cameraOpen, setCameraOpen] = useState(false);
   const [event, setEvent] = useState('');
   const [events, setEvents] = useState<OperableEvent[]>([]);
+  const [eventsLoading, setEventsLoading] = useState(true);
   const [code, setCode] = useState('');
   const [ticket, setTicket] = useState<Ticket | null>(null);
   const [dashboard, setDashboard] = useState<Dashboard>({ registered: 0, confirmed: 0, present: 0, attendance_rate: 0 });
@@ -64,6 +65,7 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
     } catch { setMessage(t('onsite.apiError')); }
   };
   const loadEvents = async () => {
+    setEventsLoading(true);
     try {
       const response = await fetch(`${context.apiBaseUrl}/onsite/v1/events`, { headers: authHeaders() });
       if (!response.ok) throw new Error();
@@ -71,6 +73,7 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
       setEvents(items);
       setEvent((current) => current && items.some((item) => item.id === current) ? current : (items[0]?.id || ''));
     } catch { setMessage(t('onsite.apiError')); }
+    finally { setEventsLoading(false); }
   };
   useEffect(() => { void loadEvents(); }, []);
   useEffect(() => { if (tab === 'checkin' && eventId) void loadDashboard(); }, [tab, eventId]);
@@ -147,7 +150,7 @@ export function OnsiteModule({ context }: { context: ModuleContext }) {
       <Card className="nx-scan-panel">
         <div className="nx-panel-heading"><div><p className="nx-eyebrow">{t('onsite.station')}</p><h2>{t('onsite.register')}</h2><p className="nx-muted">{t('onsite.registerDescription')}</p></div><Badge tone="success"><CheckCircle2 size={14} /> {t('onsite.ready')}</Badge></div>
         <div className="nx-scanner"><ScanLine size={42} /><strong>{t('onsite.scanner')}</strong><span>{t('onsite.scannerDescription')}</span></div>
-        <div className="nx-ticket-entry"><Input label={t('onsite.ticketCode')} help={t('onsite.ticketCodeHelp')} value={code} onChange={(event) => setCode(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void search(); }} placeholder="DEMO-2026-001" /><div className="nx-actions"><Button onClick={() => setCameraOpen(true)}><ScanLine size={16} />{t('onsite.openCamera')}</Button><Button variant="secondary" onClick={() => consumeQr(code)} loading={searching}>{t('onsite.scan')}</Button><Button variant="secondary" onClick={() => void search()} loading={searching}>{t('onsite.search')}</Button></div></div>
+        <div className="nx-ticket-entry"><Input disabled={eventsLoading || !eventId} label={t('onsite.ticketCode')} help={eventsLoading ? tr('Cargando eventos…') : t('onsite.ticketCodeHelp')} value={code} onChange={(event) => setCode(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') void search(); }} placeholder="DEMO-2026-001" /><div className="nx-actions"><Button disabled={eventsLoading || !eventId} onClick={() => setCameraOpen(true)}><ScanLine size={16} />{t('onsite.openCamera')}</Button><Button disabled={eventsLoading || !eventId} variant="secondary" onClick={() => consumeQr(code)} loading={searching}>{t('onsite.scan')}</Button><Button disabled={eventsLoading || !eventId} variant="secondary" onClick={() => void search()} loading={searching}>{t('onsite.search')}</Button></div></div>
         {pendingToken && <Alert tone="warning"><ShieldCheck size={16} /> {tr('Acción de supervisión')} <Button variant="secondary" onClick={() => void resolveProvisional()} loading={loading}>{tr('Aceptar como provisional')}</Button></Alert>}
         {ticket && <div className="nx-ticket-result"><div><p className="nx-eyebrow">{t('onsite.searchSelect')}{ticket.verified ? ` · ${tr('QR verificado')}` : ''}</p><strong>{ticket.masked_holder} {ticket.provisional && <Badge tone="warning">{tr('Provisional')}</Badge>}</strong><span>{ticket.ticket_id} · {ticket.status === 'active' ? t('onsite.ticketReady') : t('onsite.ticketRejected')}</span></div><Button onClick={() => void checkin(ticket.ticket_id)} loading={loading}>{t('onsite.registerSelected')}</Button></div>}
         {message && <Alert tone={error ? 'danger' : 'success'}>{error ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />} {message}</Alert>}
