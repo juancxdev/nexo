@@ -315,7 +315,7 @@ func (s *Store) Dashboard(ctx context.Context, event, tenant string) (map[string
 }
 
 func (s *Store) Events(ctx context.Context, tenant string) ([]ports.Event, error) {
-	rows, err := s.Pool.Query(ctx, `SELECT source_event_id,name,status,starts_at,ends_at,timezone,published_revision FROM onsite.events WHERE tenant_id=$1::uuid AND status IN ('draft','active','closed') ORDER BY starts_at DESC, name ASC`, tenant)
+	rows, err := s.Pool.Query(ctx, `SELECT source_event_id,name,status,starts_at,ends_at,timezone,published_revision FROM onsite.events WHERE tenant_id=$1::uuid AND status IN ('draft','active','closed') ORDER BY starts_at DESC, source_event_id ASC`, tenant)
 	if err != nil {
 		return nil, err
 	}

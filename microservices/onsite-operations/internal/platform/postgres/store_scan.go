@@ -39,6 +39,48 @@ type ScannedTicket struct {
 	ExpiresAt    time.Time `json:"expires_at"`
 }
 
+// ResolveHukIDRegistration maps the minimal identity returned by HukID to the
+// local ticket projection. HukID never returns participant PII to the browser.
+func (s *Store) ResolveHukIDRegistration(ctx context.Context, registrationID, event, scope, tenant string) (ScannedTicket, error) {
+	// The participation service is the source of truth for registrations. Its
+	// contract view lets Onsite materialize a missing projection just in time
+	// after HukID proved possession of the active credential.
+	_, err := s.Pool.Exec(ctx, `
+		INSERT INTO onsite.ticket_projections(ticket_id,event_id,scope_id,status,expires_at,masked_holder,search_code,confirmed_at)
+		SELECT r.ticket_id,e.id,sc.id,'active',GREATEST(e.ends_at + interval '30 days',now() + interval '1 day'),
+		       left(r.full_name,1) || '***',r.ticket_id,now()
+		FROM participation_contract.registrations_v1 r
+		JOIN onsite.events e ON e.tenant_id=$1::uuid
+		 AND (e.source_event_id=r.event_id OR e.participation_event_id=r.event_id)
+		 AND e.source_event_id=$3
+		JOIN onsite.scopes sc ON sc.event_id=e.id AND sc.code=$4
+		WHERE r.tenant_id=$1::uuid AND r.registration_id=$2::uuid
+		  AND r.state='confirmed' AND r.ticket_state='active'
+		ON CONFLICT (ticket_id) DO NOTHING`, tenant, registrationID, event, scope)
+	if err != nil {
+		return ScannedTicket{}, err
+	}
+	var ticket ScannedTicket
+	var status string
+	err = s.Pool.QueryRow(ctx, `
+		SELECT t.ticket_id,e.source_event_id,sc.code,t.status,t.expires_at,t.masked_holder
+		FROM participation_contract.registrations_v1 r
+		JOIN onsite.events e ON e.tenant_id=$1::uuid
+		 AND (e.source_event_id=r.event_id OR e.participation_event_id=r.event_id)
+		 AND e.source_event_id=$3
+		JOIN onsite.ticket_projections t ON t.ticket_id=r.ticket_id AND t.event_id=e.id
+		JOIN onsite.scopes sc ON sc.id=t.scope_id AND sc.code=$4
+		WHERE r.tenant_id=$1::uuid AND r.registration_id=$2::uuid`,
+		tenant, registrationID, event, scope).Scan(&ticket.ID, &ticket.EventID, &ticket.Scope, &status, &ticket.ExpiresAt, &ticket.MaskedHolder)
+	if err != nil {
+		return ScannedTicket{}, err
+	}
+	if status != "active" || !time.Now().UTC().Before(ticket.ExpiresAt) {
+		return ScannedTicket{}, errors.New("ticket_invalid")
+	}
+	return ticket, nil
+}
+
 // SessionEntry es una entrada registrada a una sesión.
 type SessionEntry struct {
 	ID           string    `json:"id"`

@@ -9,6 +9,8 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	hukidclient "nexo-onsite-operations/internal/hukid"
 	"nexo-onsite-operations/internal/onsite/domain"
 	"nexo-onsite-operations/internal/platform/postgres"
 )
@@ -16,11 +18,55 @@ import (
 // Rutas del QR firmado (OO-010/016/017) y de sesiones (OO-015).
 func (r *Router) registerScanRoutes(a *fiber.App) {
 	a.Post("/onsite/v1/scans", r.auth("onsite:checkin"), r.scan)
+	a.Post("/onsite/v1/hukid-passes/verifications", r.auth("onsite:checkin"), r.verifyHukIDPass)
 	a.Post("/onsite/v1/scans/provisional", r.auth("onsite:void"), r.resolveProvisional)
 	a.Get("/onsite/v1/scan-stats", r.auth("onsite:read"), r.scanStats)
 	a.Get("/onsite/v1/sessions", r.auth("onsite:read"), r.listSessions)
 	a.Post("/onsite/v1/sessions/:code/entries", r.auth("onsite:checkin"), r.enterSession)
 	a.Get("/onsite/v1/shifts", r.auth("onsite:read"), r.listShifts)
+}
+
+func (r *Router) verifyHukIDPass(c fiber.Ctx) error {
+	var body struct {
+		Code    string `json:"code"`
+		EventID string `json:"event_id"`
+		Scope   string `json:"scope"`
+	}
+	if json.Unmarshal(c.Body(), &body) != nil || strings.TrimSpace(body.Code) == "" || body.EventID == "" || body.Scope == "" {
+		return problem(c, 400, "invalid_body", "code, event_id y scope son obligatorios")
+	}
+	if err := r.ensureAssignment(c, body.EventID, body.Scope); err != nil {
+		return err
+	}
+	verified, err := r.HukID.VerifyPass(c.Context(), body.Code, body.EventID)
+	if err != nil {
+		var remote *hukidclient.HTTPError
+		if errors.As(err, &remote) && (remote.Status == 401 || remote.Status == 403) {
+			return problem(c, 503, "hukid_auth_failed", "Onsite no pudo autenticarse con HukID")
+		}
+		return problem(c, 503, "hukid_unavailable", "HukID no está disponible")
+	}
+	if verified.Result != "pass" {
+		code := verified.Code
+		if code == "" {
+			code = "ticket_invalid"
+		}
+		return c.JSON(fiber.Map{"accepted": false, "reason": code})
+	}
+	if verified.EventID != body.EventID || verified.RegistrationID == "" {
+		return c.JSON(fiber.Map{"accepted": false, "reason": "wrong_event"})
+	}
+	ticket, err := r.DB.ResolveHukIDRegistration(c.Context(), verified.RegistrationID, body.EventID, body.Scope, claims(c).TenantID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return c.JSON(fiber.Map{"accepted": false, "reason": "ticket_not_materialized"})
+	}
+	if err != nil {
+		if err.Error() == "ticket_invalid" {
+			return c.JSON(fiber.Map{"accepted": false, "reason": "ticket_invalid"})
+		}
+		return problem(c, 503, "persistence_unavailable", "no se pudo resolver la inscripción HukID")
+	}
+	return c.JSON(fiber.Map{"accepted": true, "ticket": ticket, "provisional": false})
 }
 
 func (r *Router) listShifts(c fiber.Ctx) error {

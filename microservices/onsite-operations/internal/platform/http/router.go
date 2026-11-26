@@ -20,6 +20,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
+	hukidclient "nexo-onsite-operations/internal/hukid"
 	"nexo-onsite-operations/internal/onsite/application"
 	"nexo-onsite-operations/internal/onsite/domain"
 	"nexo-onsite-operations/internal/onsite/ports"
@@ -30,10 +31,11 @@ type Router struct {
 	App     *fiber.App
 	Service application.Service
 	DB      *postgres.Store
+	HukID   *hukidclient.Client
 }
 
 func NewRouter(db *postgres.Store) *Router {
-	r := &Router{App: fiber.New(fiber.Config{AppName: "Nexo Onsite Operations", BodyLimit: 1 << 20, ErrorHandler: errorHandler}), DB: db, Service: application.Service{Tickets: db, Attendance: db, Devices: db}}
+	r := &Router{App: fiber.New(fiber.Config{AppName: "Nexo Onsite Operations", BodyLimit: 1 << 20, ErrorHandler: errorHandler}), DB: db, HukID: hukidclient.NewFromEnv(os.Getenv), Service: application.Service{Tickets: db, Attendance: db, Devices: db}}
 	r.routes()
 	return r
 }

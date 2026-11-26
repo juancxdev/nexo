@@ -380,6 +380,8 @@ func (s *Server) createDelivery(c fiber.Ctx) error {
 		"eventDate":         time.Now().UTC().Format("2006-01-02"),
 		"participationRole": "attendee",
 		"certificateNumber": code,
+		"recipient":         map[string]any{"registrationId": registrationID},
+		"event":             map[string]any{"id": eventID},
 	}
 	// HukID v0 del contrato canónico no soporta tx_code; el consentimiento
 	// explícito se registra en Nexo antes de crear esta solicitud.
@@ -422,12 +424,9 @@ func (s *Server) createDelivery(c fiber.Ctx) error {
 }
 func (s *Server) createParticipationDelivery(c fiber.Ctx) error {
 	var in struct {
-		EventID           string `json:"event_id"`
-		EventTitle        string `json:"event_title"`
-		RegistrationID    string `json:"registration_id"`
-		TicketID          string `json:"ticket_id"`
-		ParticipantName   string `json:"participant_name"`
-		ParticipationRole string `json:"participation_role"`
+		EventID        string `json:"event_id"`
+		RegistrationID string `json:"registration_id"`
+		TicketID       string `json:"ticket_id"`
 	}
 	if json.Unmarshal(c.Body(), &in) != nil || in.EventID == "" || in.RegistrationID == "" || in.TicketID == "" {
 		return problem(c, 400, "invalid_body", "event_id, registration_id y ticket_id son obligatorios")
@@ -443,30 +442,34 @@ func (s *Server) createParticipationDelivery(c fiber.Ctx) error {
 	}
 	issuer = hukidIssuer(issuer)
 	definition = hukidDefinition(definition, true)
-	participantName := strings.TrimSpace(in.ParticipantName)
-	if participantName == "" {
-		participantName = "Participante"
+	var participantName, eventTitle string
+	var eventDate time.Time
+	if err := s.DB.QueryRow(c.Context(), `
+		SELECT r.full_name, COALESCE(e.name, 'Evento'), COALESCE(e.starts_at, now())
+		FROM participation_contract.registrations_v1 r
+		LEFT JOIN onsite_contract.events_v1 e ON e.tenant_id=$4::uuid
+			AND (e.event_id=r.event_id OR e.participation_event_id=r.event_id)
+		WHERE r.registration_id::text=$1 AND r.event_id=$2 AND r.ticket_id=$3
+		LIMIT 1`, in.RegistrationID, in.EventID, in.TicketID, tenant(c)).Scan(&participantName, &eventTitle, &eventDate); err != nil {
+		return problem(c, 422, "registration_not_found", "no se encontraron los datos confirmados de la inscripción")
 	}
-	eventTitle := strings.TrimSpace(in.EventTitle)
-	if eventTitle == "" {
-		eventTitle = in.EventID
-	}
-	role := strings.TrimSpace(in.ParticipationRole)
-	if role == "" {
-		role = "attendee"
-	}
-	// HukID's canonical event-participation definition is intentionally flat.
-	// Do not wrap these values in a ticket object: the node rejects unknown
-	// fields and validates the exact published definition.
+	// HukID emite el VC con el contrato canónico usado por la wallet y por el
+	// endpoint de pases. El ticket sigue siendo una referencia útil, pero los
+	// campos que habilitan el pase deben vivir en recipient/event.
 	claims := map[string]any{
 		"participantName":   participantName,
 		"eventTitle":        eventTitle,
 		"organizerName":     "IncubaUNAS",
-		"eventDate":         time.Now().UTC().Format("2006-01-02"),
-		"participationRole": role,
+		"eventDate":         eventDate.UTC().Format(time.RFC3339),
+		"participationRole": "Participante",
 		"certificateNumber": in.TicketID,
+		"recipient":         map[string]any{"registrationId": in.RegistrationID},
+		"event":             map[string]any{"id": in.EventID},
 	}
-	payload := map[string]any{"issuerId": issuer, "credentialDefinition": definition, "claims": claims, "delivery": map[string]any{"flow": "pre-authorized_code", "expiresInSeconds": 300, "txCodeRequired": false}, "source": map[string]any{"system": "nexo", "reference": in.TicketID}}
+	// La credencial de participación debe quedar vinculada a la wallet mediante
+	// el proof JWT OID4VCI. Si HukID la emite inmediatamente, queda anónima y
+	// luego no puede generar el pase presencial para el check-in.
+	payload := map[string]any{"issuerId": issuer, "credentialDefinition": definition, "claims": claims, "delivery": map[string]any{"flow": "pre-authorized_code", "expiresInSeconds": 300, "txCodeRequired": false, "deferred": true}, "source": map[string]any{"system": "nexo", "reference": in.TicketID}}
 	raw, _ := json.Marshal(payload)
 	digest := sha256.Sum256(raw)
 	ciphertext, nonce, keyVersion, err := secureclaims.Encrypt(raw)
