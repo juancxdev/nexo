@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,12 +30,29 @@ type Server struct {
 	App           *fiber.App
 	OperationsURL string
 	InternalToken string
+	security      *securityState
 }
 
 func New(db *pgxpool.Pool, operationsURL, internalToken string) *Server {
-	s := &Server{DB: db, App: fiber.New(fiber.Config{AppName: "Nexo Participation"}), OperationsURL: strings.TrimRight(operationsURL, "/"), InternalToken: internalToken}
-	s.routes()
+	config, err := DefaultSecurityConfig()
+	if err != nil {
+		panic(err)
+	}
+	s, err := NewWithSecurityConfig(db, operationsURL, internalToken, config)
+	if err != nil {
+		panic(err)
+	}
 	return s
+}
+
+func NewWithSecurityConfig(db *pgxpool.Pool, operationsURL, internalToken string, config SecurityConfig) (*Server, error) {
+	security, err := NewSecurityState(config)
+	if err != nil {
+		return nil, err
+	}
+	s := &Server{DB: db, App: fiber.New(fiber.Config{AppName: "Nexo Participation"}), OperationsURL: strings.TrimRight(operationsURL, "/"), InternalToken: internalToken, security: security}
+	s.routes()
+	return s, nil
 }
 func (s *Server) routes() {
 	a := s.App
@@ -46,7 +64,8 @@ func (s *Server) routes() {
 				c.Set("Vary", "Origin")
 			}
 		}
-		c.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Correlation-Id")
+		c.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Idempotency-Key, X-Correlation-Id, X-Participation-Challenge, X-Participation-Proof")
+		c.Set("Access-Control-Allow-Credentials", "true")
 		c.Set("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
 		if c.Method() == "OPTIONS" {
 			return c.SendStatus(204)
@@ -64,8 +83,108 @@ func (s *Server) routes() {
 	})
 	a.Get("/participation/public/v1/sites/:site/events/:event/form", s.form)
 	a.Post("/participation/public/v1/sites/:site/events/:event/registrations", s.register)
+	a.Get("/participation/public/v2/sites/:site/events/:event/form", s.protectPublic(false, s.form))
+	a.Get("/participation/public/v2/sites/:site/events/:event/challenge", s.protectPublic(false, s.challenge))
+	a.Post("/participation/public/v2/sites/:site/events/:event/registrations", s.protectPublic(true, s.register))
+	a.Get("/participation/internal/v1/security/metrics", s.securityMetrics)
 	a.Get("/participation/self/v1/registrations/:id/ticket", s.ticket)
 	a.Get("/participation/self/v1/registrations/:id/credential", s.credential)
+	a.Post("/participation/self/v1/registrations/:id/cancel", s.cancelRegistration)
+}
+
+func (s *Server) protectPublic(requireChallenge bool, next fiber.Handler) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		s.security.metrics.publicRequests.Add(1)
+		ip, err := s.security.publicIP(c)
+		if err != nil {
+			return problem(c, 503, "client_ip_unavailable", "no se pudo determinar la dirección de conexión")
+		}
+		if s.security.allowlisted(ip) {
+			s.security.metrics.allowlistedRequests.Add(1)
+			return next(c)
+		}
+
+		deviceID, _ := s.security.readDeviceCookie(c.Get("Cookie"))
+		allowed, retryAfter := s.security.allowRequest(ip, c.Params("site"), c.Params("event"), deviceID, time.Now())
+		if !allowed {
+			s.security.metrics.rateLimited.Add(1)
+			c.Set("Retry-After", strconv.Itoa(retryAfterSeconds(retryAfter)))
+			return problem(c, 429, "rate_limit_exceeded", "límite temporal de solicitudes alcanzado")
+		}
+
+		if requireChallenge {
+			if deviceID == "" {
+				s.security.metrics.challengesRejected.Add(1)
+				return problem(c, 403, "challenge_required", "se requiere obtener y resolver el challenge")
+			}
+			result := s.security.verifyChallenge(
+				c.Get("X-Participation-Challenge"),
+				c.Get("X-Participation-Proof"),
+				c.Params("site"),
+				c.Params("event"),
+				deviceID,
+				time.Now(),
+			)
+			switch result {
+			case challengeValid:
+			case challengeMissing:
+				s.security.metrics.challengesRejected.Add(1)
+				return problem(c, 403, "challenge_required", "se requiere obtener y resolver el challenge")
+			case challengeExpired:
+				s.security.metrics.challengesRejected.Add(1)
+				return problem(c, 403, "challenge_expired", "el challenge expiró; solicita uno nuevo")
+			case challengeReplay:
+				s.security.metrics.challengesRejected.Add(1)
+				return problem(c, 409, "challenge_replayed", "el challenge ya fue utilizado")
+			case challengeStateFull:
+				s.security.metrics.challengesRejected.Add(1)
+				return problem(c, 503, "challenge_state_unavailable", "no se pudo verificar el challenge")
+			default:
+				s.security.metrics.challengesRejected.Add(1)
+				return problem(c, 403, "challenge_invalid", "el challenge no es válido")
+			}
+		}
+		return next(c)
+	}
+}
+
+func (s *Server) challenge(c fiber.Ctx) error {
+	var exists bool
+	if err := s.DB.QueryRow(c.Context(), `SELECT EXISTS(SELECT 1 FROM participation.forms WHERE site_slug=$1 AND event_slug=$2)`, c.Params("site"), c.Params("event")).Scan(&exists); err != nil {
+		return problem(c, 503, "persistence_unavailable", "no se pudo consultar el formulario")
+	}
+	if !exists {
+		return problem(c, 404, "form_not_found", "formulario no encontrado")
+	}
+	return s.issueChallengeResponse(c)
+}
+
+func (s *Server) issueChallengeResponse(c fiber.Ctx) error {
+	now := time.Now()
+	deviceID, err := s.security.ensureDeviceCookie(c, now)
+	if err != nil {
+		return problem(c, 503, "challenge_unavailable", "no se pudo preparar el challenge")
+	}
+	token, expiresAt, err := s.security.issueChallenge(c.Params("site"), c.Params("event"), deviceID, now)
+	if err != nil {
+		return problem(c, 503, "challenge_unavailable", "no se pudo generar el challenge")
+	}
+	s.security.metrics.challengesIssued.Add(1)
+	return c.JSON(fiber.Map{
+		"challenge":  token,
+		"difficulty": s.security.config.ChallengeDifficulty,
+		"expires_at": expiresAt.UTC().Format(time.RFC3339),
+	})
+}
+
+func (s *Server) securityMetrics(c fiber.Ctx) error {
+	if s.security.config.MetricsToken == "" {
+		return problem(c, 503, "metrics_not_configured", "las métricas operativas no están configuradas")
+	}
+	if !bearerMatches(c.Get("Authorization"), s.security.config.MetricsToken) {
+		return problem(c, 401, "unauthorized", "token operativo requerido")
+	}
+	return c.JSON(s.security.metricsSnapshot())
 }
 
 type formRow struct {
@@ -148,13 +267,24 @@ func (s *Server) register(c fiber.Ctx) error {
 		return problem(c, 503, "persistence_unavailable", "no se pudo iniciar el registro")
 	}
 	defer tx.Rollback(c.Context())
-	var formID, eventID, formVersion, consentVersion, tenantID string
+	var formID, eventID, eventTitle, formVersion, consentVersion, tenantID string
 	var remaining int
 	var waitlist bool
 	var binding string
-	err = tx.QueryRow(c.Context(), `SELECT id::text,event_id,form_version_id::text,consent_version,remaining,waitlist_enabled,binding_state,tenant_id::text FROM participation.forms WHERE site_slug=$1 AND event_slug=$2 FOR UPDATE`, c.Params("site"), c.Params("event")).Scan(&formID, &eventID, &formVersion, &consentVersion, &remaining, &waitlist, &binding, &tenantID)
+	err = tx.QueryRow(c.Context(), `SELECT id::text,event_id,event_title,form_version_id::text,consent_version,remaining,waitlist_enabled,binding_state,tenant_id::text FROM participation.forms WHERE site_slug=$1 AND event_slug=$2 FOR UPDATE`, c.Params("site"), c.Params("event")).Scan(&formID, &eventID, &eventTitle, &formVersion, &consentVersion, &remaining, &waitlist, &binding, &tenantID)
 	if err != nil {
 		return problem(c, 404, "form_not_found", "formulario no encontrado")
+	}
+	err = tx.QueryRow(c.Context(), `SELECT id::text,request_hash,state,waitlist_position,ticket_id,self_access_token_ciphertext,hukid_state FROM participation.registrations WHERE form_id=$1::uuid AND idempotency_key=$2`, formID, key).Scan(&existing, &existingHash, &existingState, &wait, &ticket, &encryptedToken, &existingHukidState)
+	if err == nil {
+		if existingHash != hash {
+			return problem(c, 409, "idempotency_key_reused", "el Idempotency-Key ya fue usado con otro payload")
+		}
+		token, _ = unprotectToken(encryptedToken)
+		return receipt(c, existing, eventID, existingState, wait, ticket, token, existingHukidState)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return problem(c, 503, "persistence_unavailable", "no se pudo verificar la idempotencia del registro")
 	}
 	if binding != "open" {
 		return problem(c, 409, "registration_closed", "el registro no está abierto")
@@ -210,7 +340,7 @@ func (s *Server) register(c fiber.Ctx) error {
 	}
 	hukidState := "not_requested"
 	if state == "confirmed" && s.OperationsURL != "" && s.InternalToken != "" {
-		hukidState = s.requestHukID(c.Context(), tenantID, eventID, id.String(), *ticketID)
+		hukidState = s.requestHukID(c.Context(), tenantID, eventID, eventTitle, id.String(), *ticketID, in.Attendee.FullName, in.Answers)
 		_, _ = s.DB.Exec(c.Context(), `UPDATE participation.registrations SET hukid_state=$2 WHERE id=$1::uuid`, id, hukidState)
 	}
 	return receipt(c, id.String(), eventID, state, pos, ticketID, token, hukidState)
@@ -222,8 +352,15 @@ func fingerprint(fullName, institution, email string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func (s *Server) requestHukID(ctx context.Context, tenantID, eventID, registrationID, ticketID string) string {
-	body, _ := json.Marshal(map[string]string{"event_id": eventID, "registration_id": registrationID, "ticket_id": ticketID})
+func (s *Server) requestHukID(ctx context.Context, tenantID, eventID, eventTitle, registrationID, ticketID, participantName string, answers map[string]any) string {
+	role := "attendee"
+	if value, ok := answers["role"].(string); ok && strings.TrimSpace(value) != "" {
+		role = strings.TrimSpace(value)
+	}
+	body, _ := json.Marshal(map[string]any{
+		"event_id": eventID, "event_title": eventTitle, "registration_id": registrationID,
+		"ticket_id": ticketID, "participant_name": participantName, "participation_role": role,
+	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.OperationsURL+"/internal/v1/participation-credentials", bytes.NewReader(body))
 	if err != nil {
 		return "request_failed"
@@ -295,6 +432,75 @@ func (s *Server) credential(c fiber.Ctx) error {
 		return problem(c, 503, "hukid_invalid_response", "respuesta HukID inválida")
 	}
 	return c.JSON(payload)
+}
+
+func (s *Server) cancelRegistration(c fiber.Ctx) error {
+	auth := strings.TrimSpace(strings.TrimPrefix(c.Get("Authorization"), "Bearer "))
+	if auth == "" || !strings.HasPrefix(c.Get("Authorization"), "Bearer ") {
+		return problem(c, 401, "unauthorized", "token de acceso requerido")
+	}
+	regID, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return problem(c, 404, "registration_not_found", "registro no encontrado")
+	}
+	tokenHash := hashString(auth)
+
+	var formID, storedHash string
+	err = s.DB.QueryRow(c.Context(), `SELECT form_id::text, self_access_token_hash FROM participation.registrations WHERE id=$1::uuid`, regID).Scan(&formID, &storedHash)
+	if err != nil || storedHash != tokenHash {
+		return problem(c, 404, "registration_not_found", "registro no encontrado")
+	}
+
+	tx, err := s.DB.Begin(c.Context())
+	if err != nil {
+		return problem(c, 503, "persistence_unavailable", "no se pudo iniciar la cancelación")
+	}
+	defer tx.Rollback(c.Context())
+
+	var eventID, siteSlug, eventSlug string
+	if err = tx.QueryRow(c.Context(), `SELECT event_id, site_slug, event_slug FROM participation.forms WHERE id=$1::uuid FOR UPDATE`, formID).Scan(&eventID, &siteSlug, &eventSlug); err != nil {
+		return problem(c, 404, "form_not_found", "formulario no encontrado")
+	}
+
+	var currentState string
+	err = tx.QueryRow(c.Context(), `SELECT state FROM participation.registrations WHERE id=$1::uuid AND form_id=$2::uuid AND self_access_token_hash=$3 FOR UPDATE`, regID, formID, tokenHash).Scan(&currentState)
+	if err != nil {
+		return problem(c, 404, "registration_not_found", "registro no encontrado")
+	}
+
+	if currentState == "cancelled" {
+		if err = tx.Commit(c.Context()); err != nil {
+			return problem(c, 503, "persistence_unavailable", "no se pudo confirmar la cancelación")
+		}
+		return c.JSON(fiber.Map{"id": regID.String(), "event_id": eventID, "state": "cancelled"})
+	}
+
+	if _, err = tx.Exec(c.Context(), `UPDATE participation.registrations SET state='cancelled', ticket_state=CASE WHEN ticket_id IS NOT NULL THEN 'revoked' ELSE ticket_state END, waitlist_position=NULL, updated_at=now() WHERE id=$1::uuid`, regID); err != nil {
+		return problem(c, 503, "persistence_unavailable", "no se pudo cancelar el registro")
+	}
+
+	if currentState == "confirmed" {
+		var promotedID string
+		err = tx.QueryRow(c.Context(), `SELECT id::text FROM participation.registrations WHERE form_id=$1::uuid AND state='waitlisted' ORDER BY waitlist_position ASC NULLS LAST, created_at ASC LIMIT 1 FOR UPDATE`, formID).Scan(&promotedID)
+		if err == nil {
+			ticketID := uuid.NewString()
+			ticketJWS := makeTicket(ticketID, eventID, siteSlug, eventSlug)
+			if _, err = tx.Exec(c.Context(), `UPDATE participation.registrations SET state='confirmed', waitlist_position=NULL, ticket_id=$2, ticket_jws=$3, ticket_state='active', updated_at=now() WHERE id=$1::uuid`, promotedID, ticketID, ticketJWS); err != nil {
+				return problem(c, 503, "persistence_unavailable", "no se pudo promover la lista de espera")
+			}
+		} else if errors.Is(err, pgx.ErrNoRows) {
+			if _, err = tx.Exec(c.Context(), `UPDATE participation.forms SET remaining=remaining+1, confirmed_count=GREATEST(confirmed_count-1, 0) WHERE id=$1::uuid`, formID); err != nil {
+				return problem(c, 503, "persistence_unavailable", "no se pudo liberar el cupo")
+			}
+		} else {
+			return problem(c, 503, "persistence_unavailable", "no se pudo consultar la lista de espera")
+		}
+	}
+
+	if err = tx.Commit(c.Context()); err != nil {
+		return problem(c, 503, "persistence_unavailable", "no se pudo confirmar la cancelación")
+	}
+	return c.JSON(fiber.Map{"id": regID.String(), "event_id": eventID, "state": "cancelled"})
 }
 func hashString(v string) string {
 	h := sha256.Sum256([]byte(v))

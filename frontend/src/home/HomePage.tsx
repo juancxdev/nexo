@@ -1,20 +1,27 @@
+import {useMemo, useState} from 'react';
 import type {ReactNode} from 'react';
-import {ArrowRight, Award, Building2, CalendarDays, CircleCheck, CirclePlus, Compass, GraduationCap, MapPin, Medal, Network, Sparkles, Trophy, Users} from 'lucide-react';
+import {Building2, CirclePlus, Compass, GraduationCap, Network, Users} from 'lucide-react';
 import {useI18n} from '../core/i18n';
-import {homeContent} from './content';
-import type {AwardIcon, EventStatus, HomeEvent, OfferIcon} from './content';
-import {homeImages} from './images';
+import {buildDemoEvents, homeContent} from './content';
+import type {OfferIcon} from './content';
+import {sortEventsForHome} from './events';
 import {HomeNavbar} from './HomeNavbar';
 import {HomeFooter} from './HomeFooter';
+import {EventCarousel} from './EventCarousel';
+import {useLiveNow} from './useLiveNow';
 import './home.css';
 
-const awardIcons: Record<AwardIcon, ReactNode> = {trophy: <Trophy size={24}/>, award: <Award size={24}/>, medal: <Medal size={24}/>};
 const offerIcons: Record<OfferIcon, ReactNode> = {mentoring: <Users size={24}/>, training: <GraduationCap size={24}/>, networking: <Network size={24}/>, coworking: <Building2 size={24}/>};
-const statusIcons: Record<EventStatus, ReactNode> = {live: <span className="nx-home-live-dot" aria-hidden="true"/>, open: <CircleCheck size={13}/>, lastSeats: <Sparkles size={13}/>};
 
 export function HomePage({onAccess}: {onAccess: () => void}) {
   const {locale} = useI18n();
   const content = homeContent[locale];
+  // Las fechas de la lista demo se fijan una sola vez al cargar; el reloj en vivo sólo decide el estado.
+  // Con la API real, `baseEvents` vendrá del servidor y el estado seguirá calculándose igual.
+  const [demoAnchor] = useState(() => new Date());
+  const baseEvents = useMemo(() => buildDemoEvents(content.events.items, demoAnchor), [content, demoAnchor]);
+  const now = useLiveNow(baseEvents);
+  const events = useMemo(() => sortEventsForHome(baseEvents, now), [baseEvents, now]);
   return (
     <div className="nx-home">
       <a className="nx-skip-link" href="#contenido">{content.skipLink}</a>
@@ -30,34 +37,7 @@ export function HomePage({onAccess}: {onAccess: () => void}) {
                 <button type="button" className="nx-home-button nx-home-button-outline nx-home-button-lg" onClick={onAccess}><CirclePlus size={18}/>{content.hero.create}</button>
               </div>
             </div>
-            <div id="eventos" className="nx-home-events" role="list" aria-label={content.events.label}>
-              {content.events.items.map(event => <EventCard key={event.id} event={event} registerLabel={content.events.register} onRegister={onAccess}/>)}
-            </div>
-          </div>
-        </section>
-
-        <section className="nx-home-section nx-home-section-plain" aria-label={content.metrics.label}>
-          <div className="nx-home-container nx-home-metrics">
-            {content.metrics.items.map(metric => (
-              <div key={metric.label} className="nx-home-metric">
-                <p className={`nx-home-metric-value nx-home-tone-${metric.tone}`}>{metric.value}</p>
-                <h3>{metric.label}</h3>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="nx-home-section nx-home-section-tinted" aria-labelledby="home-awards-title">
-          <div className="nx-home-container">
-            <SectionHeading id="home-awards-title" title={content.awards.title} description={content.awards.description}/>
-            <div className="nx-home-awards">
-              {content.awards.items.map((award, index) => (
-                <article key={award.title} className="nx-home-card nx-home-award">
-                  <span className={`nx-home-icon-tile ${index === 1 ? 'nx-home-icon-tile-accent' : ''}`}>{awardIcons[award.icon]}</span>
-                  <h3>{award.title}</h3>
-                </article>
-              ))}
-            </div>
+            <EventCarousel events={events} content={content.events} locale={locale} now={now} onAccess={onAccess}/>
           </div>
         </section>
 
@@ -75,15 +55,6 @@ export function HomePage({onAccess}: {onAccess: () => void}) {
             </div>
           </div>
         </section>
-
-        <section className="nx-home-section nx-home-section-tinted" aria-labelledby="home-allies-title">
-          <div className="nx-home-container">
-            <SectionHeading id="home-allies-title" title={content.allies.title} description={content.allies.description}/>
-            <div className="nx-home-card nx-home-allies">
-              <img src={homeImages.allies} alt={content.allies.imageAlt} loading="lazy"/>
-            </div>
-          </div>
-        </section>
       </main>
       <HomeFooter content={content.footer}/>
     </div>
@@ -96,26 +67,5 @@ function SectionHeading({id, title, description}: {id: string; title: string; de
       <h2 id={id}>{title}</h2>
       <p>{description}</p>
     </div>
-  );
-}
-
-function EventCard({event, registerLabel, onRegister}: {event: HomeEvent; registerLabel: string; onRegister: () => void}) {
-  return (
-    <article className="nx-home-card nx-home-event" role="listitem">
-      <div className="nx-home-event-media">
-        <img src={event.image} alt={event.imageAlt} loading="lazy"/>
-        <span className="nx-home-event-status">{statusIcons[event.status]}{event.statusLabel}</span>
-        <span className="nx-home-event-category">{event.category}</span>
-      </div>
-      <div className="nx-home-event-body">
-        <p className="nx-home-event-date"><CalendarDays size={16}/>{event.date}</p>
-        <h3>{event.title}</h3>
-        <p className="nx-home-event-description">{event.description}</p>
-        <div className="nx-home-event-footer">
-          <span className="nx-home-event-place"><MapPin size={16}/>{event.place}</span>
-          <button type="button" className="nx-home-link" onClick={onRegister}>{registerLabel}<ArrowRight size={16}/></button>
-        </div>
-      </div>
-    </article>
   );
 }

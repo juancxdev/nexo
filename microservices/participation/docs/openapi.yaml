@@ -1,8 +1,8 @@
 openapi: 3.1.0
 info:
   title: Nexo Participation API
-  version: 0.1.0
-  description: Registro público e tickets de participación, sobre PostgreSQL central.
+  version: 0.2.0
+  description: Registro público e tickets de participación. v1 conserva el flujo existente; v2 añade challenge obligatorio y controles PA-040.
 servers:
   - url: http://localhost:8084
 paths:
@@ -29,6 +29,51 @@ paths:
         '201': {description: Registration receipt, content: {application/json: {schema: {$ref: '#/components/schemas/RegistrationReceipt'}}}}
         '400': {$ref: '#/components/responses/Problem'}
         '409': {$ref: '#/components/responses/Problem'}
+  /participation/public/v2/sites/{site}/events/{event}/form:
+    get:
+      parameters:
+        - {$ref: '#/components/parameters/Site'}
+        - {$ref: '#/components/parameters/Event'}
+      responses:
+        '200': {description: Published form, content: {application/json: {schema: {$ref: '#/components/schemas/ParticipationForm'}}}}
+        '404': {$ref: '#/components/responses/Problem'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /participation/public/v2/sites/{site}/events/{event}/challenge:
+    get:
+      parameters:
+        - {$ref: '#/components/parameters/Site'}
+        - {$ref: '#/components/parameters/Event'}
+      responses:
+        '200':
+          description: Signed proof-of-work challenge. Sets an HttpOnly device cookie.
+          headers:
+            Set-Cookie: {schema: {type: string}}
+          content: {application/json: {schema: {$ref: '#/components/schemas/ParticipationChallenge'}}}
+        '404': {$ref: '#/components/responses/Problem'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /participation/public/v2/sites/{site}/events/{event}/registrations:
+    post:
+      parameters:
+        - {$ref: '#/components/parameters/Site'}
+        - {$ref: '#/components/parameters/Event'}
+        - {$ref: '#/components/parameters/IdempotencyKey'}
+        - {$ref: '#/components/parameters/ParticipationChallenge'}
+        - {$ref: '#/components/parameters/ParticipationProof'}
+      security: [{participationDevice: []}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/RegistrationCreate'}}}}
+      responses:
+        '201': {description: Registration receipt, content: {application/json: {schema: {$ref: '#/components/schemas/RegistrationReceipt'}}}}
+        '400': {$ref: '#/components/responses/Problem'}
+        '403': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /participation/internal/v1/security/metrics:
+    get:
+      security: [{bearerAuth: []}]
+      responses:
+        '200': {description: Aggregated counters without request identifiers, content: {application/json: {schema: {$ref: '#/components/schemas/ParticipationSecurityMetrics'}}}}
+        '401': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
   /participation/self/v1/registrations/{id}/ticket:
     get:
       security: [{bearerAuth: []}]
@@ -36,15 +81,51 @@ paths:
       responses:
         '200': {description: Ticket, content: {application/json: {schema: {$ref: '#/components/schemas/Ticket'}}}}
         '401': {$ref: '#/components/responses/Problem'}
+  /participation/self/v1/registrations/{id}/cancel:
+    post:
+      security: [{bearerAuth: []}]
+      parameters: [{name: id, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses:
+        '200': {description: Cancelled registration (idempotent), content: {application/json: {schema: {$ref: '#/components/schemas/RegistrationCancelReceipt'}}}}
+        '401': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
 components:
-  securitySchemes: {bearerAuth: {type: http, scheme: bearer}}
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer}
+    participationDevice: {type: apiKey, in: cookie, name: participation_device}
   parameters:
     Site: {name: site, in: path, required: true, schema: {type: string}}
     Event: {name: event, in: path, required: true, schema: {type: string}}
     IdempotencyKey: {name: Idempotency-Key, in: header, required: true, schema: {type: string, minLength: 8}}
+    ParticipationChallenge: {name: X-Participation-Challenge, in: header, required: true, schema: {type: string}}
+    ParticipationProof: {name: X-Participation-Proof, in: header, required: true, schema: {type: string, pattern: '^[0-9]+$'}}
   responses:
     Problem: {description: RFC 9457 problem, content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}}
+    TooManyRequests:
+      description: Request rate exceeded. Retry after the number of seconds in Retry-After.
+      headers:
+        Retry-After: {schema: {type: integer, minimum: 1}}
+      content: {application/problem+json: {schema: {$ref: '#/components/schemas/Problem'}}}
   schemas:
+    ParticipationChallenge:
+      type: object
+      required: [challenge,difficulty,expires_at]
+      properties:
+        challenge: {type: string}
+        difficulty: {type: integer, minimum: 8, maximum: 16}
+        expires_at: {type: string, format: date-time}
+    ParticipationSecurityMetrics:
+      type: object
+      required: [public_requests,rate_limited,challenges_issued,challenges_accepted,challenges_rejected,challenge_replays,allowlisted_requests]
+      properties:
+        public_requests: {type: integer, minimum: 0}
+        rate_limited: {type: integer, minimum: 0}
+        challenges_issued: {type: integer, minimum: 0}
+        challenges_accepted: {type: integer, minimum: 0}
+        challenges_rejected: {type: integer, minimum: 0}
+        challenge_replays: {type: integer, minimum: 0}
+        allowlisted_requests: {type: integer, minimum: 0}
     ParticipationForm:
       type: object
       required: [site_slug,event_slug,event_id,form_version_id,consent_version,binding_state,consent_text]
@@ -71,6 +152,10 @@ components:
     RegistrationReceipt:
       type: object
       properties: {id: {type: string, format: uuid}, event_id: {type: string}, state: {type: string}, waitlist_position: {type: integer, nullable: true}, ticket_id: {type: string, nullable: true}, self_access_token: {type: string}}
+    RegistrationCancelReceipt:
+      type: object
+      required: [id,event_id,state]
+      properties: {id: {type: string, format: uuid}, event_id: {type: string}, state: {type: string, enum: [cancelled]}}
     Ticket:
       type: object
       properties: {id: {type: string, format: uuid}, state: {type: string}, ticket_jws: {type: string}, expires_at: {type: string, format: date-time}}
