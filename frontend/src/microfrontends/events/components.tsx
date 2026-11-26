@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
-import { ArrowRight, CalendarDays, Layers3, MapPin, Sparkles, Users, X } from 'lucide-react';
+import { AlertCircle, ArrowRight, CalendarDays, Layers3, MapPin, Sparkles, Users, X } from 'lucide-react';
 import { Badge as NexoBadge, Card, EmptyState } from '../../design-system';
 import { translateEvents as tr } from '../../core/events-i18n';
-import { displayDate, type RecordData } from './api';
+import { ApiError, displayDate, type RecordData } from './api';
 
 export type Field = { name: string; label: string; type?: 'text' | 'textarea' | 'datetime-local' | 'number' | 'checkbox' | 'select' | 'multiselect' | 'json'; required?: boolean; options?: { label: string; value: string }[]; hint?: string };
 export type Dialog = { title: string; description?: string; fields: Field[]; initial?: RecordData; submit: (body: RecordData) => Promise<void>; button?: string };
@@ -15,6 +15,7 @@ export function FormDialog({ dialog, close }: { dialog: Dialog; close: () => voi
   }));
   const [values, setValues] = useState<RecordData>(initial);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef(close);
@@ -35,26 +36,86 @@ export function FormDialog({ dialog, close }: { dialog: Dialog; close: () => voi
     document.addEventListener('keydown', onKeyDown);
     return () => { document.removeEventListener('keydown', onKeyDown); previous?.focus(); };
   }, []);
+  const clearFieldError = (name: string) => {
+    setFieldErrors((prev) => {
+      if (!prev[name]) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
+  };
   const submit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault(); setBusy(true); setError('');
-    try {
-      const body: RecordData = {};
-      const form = new FormData(event.currentTarget);
-      for (const field of dialog.fields) {
-        if (field.type === 'multiselect') { body[field.name] = form.getAll(field.name).map(String); continue; }
-        const value = field.type === 'checkbox' ? form.has(field.name) : form.get(field.name);
-        if (value === '' || value === null) continue;
-        body[field.name] = field.type === 'number' ? Number(value) : field.type === 'datetime-local' ? new Date(String(value)).toISOString() : field.type === 'json' ? JSON.parse(String(value)) : value;
+    event.preventDefault(); setError('');
+    const nextErrors: Record<string, string> = {};
+    const body: RecordData = {};
+    const form = new FormData(event.currentTarget);
+    for (const field of dialog.fields) {
+      if (field.type === 'multiselect') {
+        const selected = form.getAll(field.name).map(String);
+        if (field.required && selected.length === 0) nextErrors[field.name] = tr("Selecciona al menos una opción.");
+        body[field.name] = selected;
+        continue;
       }
+      const value = field.type === 'checkbox' ? form.has(field.name) : form.get(field.name);
+      if (field.required && (value === '' || value === null || value === false)) {
+        nextErrors[field.name] = tr("Este campo es obligatorio.");
+        continue;
+      }
+      if (value === '' || value === null) continue;
+      if (field.type === 'number') {
+        const n = Number(value);
+        if (Number.isNaN(n)) { nextErrors[field.name] = tr("Ingresa un número válido."); continue; }
+        body[field.name] = n;
+      } else if (field.type === 'datetime-local') {
+        const d = new Date(String(value));
+        if (Number.isNaN(d.getTime())) { nextErrors[field.name] = tr("Ingresa una fecha y hora válida."); continue; }
+        body[field.name] = d.toISOString();
+      } else if (field.type === 'json') {
+        try { body[field.name] = JSON.parse(String(value)); }
+        catch { nextErrors[field.name] = tr("El formato JSON no es válido."); }
+      } else {
+        body[field.name] = value;
+      }
+    }
+    if (body.starts_at && body.ends_at && new Date(String(body.ends_at)) <= new Date(String(body.starts_at))) {
+      nextErrors.ends_at = tr("La fecha de fin debe ser posterior a la de inicio.");
+    }
+    if (Object.keys(nextErrors).length > 0) {
+      setFieldErrors(nextErrors);
+      const firstKey = Object.keys(nextErrors)[0];
+      dialogRef.current?.querySelector<HTMLElement>(`[name="${firstKey}"]`)?.focus();
+      return;
+    }
+    setFieldErrors({});
+    setBusy(true);
+    try {
       await dialog.submit(body); close();
-    } catch (error) { setError(error instanceof Error ? error.message : tr("No se pudo completar la operación.")); }
+    } catch (err) {
+      if (err instanceof ApiError && Object.keys(err.fieldErrors).length > 0) {
+        const known = new Set(dialog.fields.map((f) => f.name));
+        const matched: Record<string, string> = {};
+        for (const [k, v] of Object.entries(err.fieldErrors)) {
+          if (known.has(k)) matched[k] = v;
+        }
+        if (Object.keys(matched).length > 0) {
+          setFieldErrors(matched);
+          const firstKey = Object.keys(matched)[0];
+          dialogRef.current?.querySelector<HTMLElement>(`[name="${firstKey}"]`)?.focus();
+        } else {
+          setError(err.message);
+        }
+      } else {
+        setError(err instanceof Error ? err.message : tr("No se pudo completar la operación."));
+      }
+    }
     finally { setBusy(false); }
   };
   return <div className="overlay" onMouseDown={close}><div ref={dialogRef} className="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title" onMouseDown={e => e.stopPropagation()}>
     <div className="dialog-head"><div><p className="eyebrow">{tr("CONFIGURACIÓN")}</p><h2 id="dialog-title">{dialog.title}</h2>{dialog.description && <p className="subtle">{dialog.description}</p>}</div><button className="icon-button" onClick={close} aria-label={tr("Cerrar")}><X size={19}/></button></div>
-    <form onSubmit={submit}><div className="form-grid">{dialog.fields.map(field => <label className={`field ${field.type === 'textarea' || field.type === 'json' ? 'wide' : ''} ${field.type === 'checkbox' ? 'check-field' : ''}`} key={field.name}>
-      {field.type === 'checkbox' ? <><input name={field.name} type="checkbox" checked={Boolean(values[field.name])} onChange={e => setValues({ ...values, [field.name]: e.target.checked })}/><span>{field.label}</span></> : <><span>{field.label}{field.required && ' *'}</span>{field.type === 'select' ? <select name={field.name} required={field.required} value={String(values[field.name] ?? '')} onChange={e => setValues({ ...values, [field.name]: e.target.value })}><option value="">{tr("Selecciona una opción")}</option>{field.options?.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select> : field.type === 'multiselect' ? <select name={field.name} multiple defaultValue={Array.isArray(values[field.name]) ? (values[field.name] as unknown[]).map(String) : []} size={Math.min(5, Math.max(2, field.options?.length ?? 0))}>{field.options?.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select> : field.type === 'textarea' || field.type === 'json' ? <textarea name={field.name} required={field.required} rows={field.type === 'json' ? 9 : 3} value={String(values[field.name] ?? '')} onChange={e => setValues({ ...values, [field.name]: e.target.value })}/> : <input name={field.name} required={field.required} type={field.type || 'text'} value={String(values[field.name] ?? '')} onChange={e => setValues({ ...values, [field.name]: e.target.value })}/>} {field.hint && <small>{field.hint}</small>}</>}
-    </label>)}</div>{error && <div className="alert error">{error}</div>}<div className="dialog-actions"><button type="button" className="button secondary" onClick={close}>{tr("Cancelar")}</button><button disabled={busy} className="button primary">{busy ? tr("Guardando…") : dialog.button || tr("Guardar cambios")} <ArrowRight size={16}/></button></div></form>
+    <form onSubmit={submit} noValidate><div className="form-grid">{dialog.fields.map(field => { const errMsg = fieldErrors[field.name]; const errId = errMsg ? `err-${field.name}` : undefined; return <label className={`field ${field.type === 'textarea' || field.type === 'json' ? 'wide' : ''} ${field.type === 'checkbox' ? 'check-field' : ''} ${errMsg ? 'has-error' : ''}`} key={field.name}>
+      {field.type === 'checkbox' ? <><input name={field.name} type="checkbox" checked={Boolean(values[field.name])} aria-invalid={Boolean(errMsg)} aria-describedby={errId} onChange={e => { clearFieldError(field.name); setValues({ ...values, [field.name]: e.target.checked }); }}/><span>{field.label}</span></> : <><span>{field.label}{field.required && ' *'}</span>{field.type === 'select' ? <select name={field.name} required={field.required} value={String(values[field.name] ?? '')} aria-invalid={Boolean(errMsg)} aria-describedby={errId} onChange={e => { clearFieldError(field.name); setValues({ ...values, [field.name]: e.target.value }); }}><option value="">{tr("Selecciona una opción")}</option>{field.options?.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select> : field.type === 'multiselect' ? <select name={field.name} multiple defaultValue={Array.isArray(values[field.name]) ? (values[field.name] as unknown[]).map(String) : []} size={Math.min(5, Math.max(2, field.options?.length ?? 0))} aria-invalid={Boolean(errMsg)} aria-describedby={errId} onChange={() => clearFieldError(field.name)}>{field.options?.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select> : field.type === 'textarea' || field.type === 'json' ? <textarea name={field.name} required={field.required} rows={field.type === 'json' ? 9 : 3} value={String(values[field.name] ?? '')} aria-invalid={Boolean(errMsg)} aria-describedby={errId} onChange={e => { clearFieldError(field.name); setValues({ ...values, [field.name]: e.target.value }); }}/> : <input name={field.name} required={field.required} type={field.type || 'text'} value={String(values[field.name] ?? '')} aria-invalid={Boolean(errMsg)} aria-describedby={errId} onChange={e => { clearFieldError(field.name); setValues({ ...values, [field.name]: e.target.value }); }}/>} {field.hint && <small>{field.hint}</small>}</>}
+      {errMsg && <span id={errId} className="field-error" role="alert"><AlertCircle size={14}/> {errMsg}</span>}
+    </label>; })}</div>{error && <div className="alert error" role="alert"><AlertCircle size={16}/> {error}</div>}<div className="dialog-actions"><button type="button" className="button secondary" onClick={close}>{tr("Cancelar")}</button><button disabled={busy} className="button primary">{busy ? tr("Guardando…") : dialog.button || tr("Guardar cambios")} <ArrowRight size={16}/></button></div></form>
   </div></div>;
 }
 
@@ -73,4 +134,4 @@ export function Stat({ icon, label, value, hint, tone }: { icon: ReactNode; labe
 export function Step({ number, title, detail, onClick }: { number: string; title: string; detail: string; onClick: () => void }) { return <button className="step" onClick={onClick}><span>{number}</span><div><strong>{title}</strong><small>{detail}</small></div><ArrowRight size={16}/></button>; }
 export function Detail({ label, value }: { label: string; value?: string }) { return <div className="detail"><small>{label}</small><strong>{value}</strong></div>; }
 export function EventList({ rows, select, selectedId }: { rows: RecordData[]; select: (row: RecordData) => void; selectedId?: string }) { return <div className="event-list">{rows.map((event, index) => <button key={event.id} className={`event-row ${selectedId === event.id ? 'selected' : ''}`} onClick={() => select(event)}><div className={`event-icon ${['peach', 'lavender', 'green', 'yellow'][index % 4]}`}><CalendarDays size={19}/></div><div className="event-name"><strong>{event.title}</strong><span>{event.slug}</span></div><div className="event-date">{displayDate(event.starts_at)}</div><Badge status={event.status}/><ArrowRight className="row-arrow" size={17}/></button>)}</div>; }
-export function ResourceList({ rows, kind, onEdit, onArchive, extra }: { rows: RecordData[]; kind: 'venue' | 'speaker' | 'program'; onEdit: (row: RecordData) => void; onArchive: (row: RecordData) => void; extra?: (row: RecordData) => ReactNode }) { if (!rows.length) return <Empty title={tr("Sin registros por ahora")} description={tr("Cuando agregues elementos aparecerán aquí.")}/>; return <div className="resource-list">{rows.map(row => <div className="resource-row" key={row.id}><div className={`resource-icon ${kind === 'speaker' ? 'peach' : kind === 'program' ? 'lavender' : 'green'}`}>{kind === 'speaker' ? <Users size={18}/> : kind === 'program' ? <Layers3 size={18}/> : <MapPin size={18}/>}</div><div className="resource-main"><strong>{row.name || row.display_name}</strong><span>{kind === 'venue' ? `${row.kind === 'room' ? `${tr("Sala")}${row.parent_venue_name ? ` (${row.parent_venue_name})` : ''}` : tr("Sede")} · ${row.location?.address || tr("Sin dirección")}${row.location?.locality ? `, ${row.location.locality}` : ''}${row.capacity ? ` · ${tr("Capacidad")}: ${row.capacity}` : ''}` : kind === 'speaker' ? (row.public_consent ? tr("Consentimiento público registrado") : tr("Sin consentimiento público")) : row.slug}</span></div><span className="revision">REV. {row.revision}</span>{extra?.(row)}<button className="small-button" onClick={() => onEdit(row)}>{tr("Editar")}</button><button className="small-button muted" onClick={() => onArchive(row)}>{tr("Archivar")}</button></div>)}</div>; }
+export function ResourceList({ rows, kind, onEdit, onArchive, extra }: { rows: RecordData[]; kind: 'venue' | 'speaker' | 'program'; onEdit?: (row: RecordData) => void; onArchive?: (row: RecordData) => void; extra?: (row: RecordData) => ReactNode }) { if (!rows.length) return <Empty title={tr("Sin registros por ahora")} description={tr("Cuando agregues elementos aparecerán aquí.")}/>; return <div className="resource-list">{rows.map(row => <div className="resource-row" key={row.id}><div className={`resource-icon ${kind === 'speaker' ? 'peach' : kind === 'program' ? 'lavender' : 'green'}`}>{kind === 'speaker' ? <Users size={18}/> : kind === 'program' ? <Layers3 size={18}/> : <MapPin size={18}/>}</div><div className="resource-main"><strong>{row.name || row.display_name}</strong><span>{kind === 'venue' ? `${row.kind === 'room' ? `${tr("Sala")}${row.parent_venue_name ? ` (${row.parent_venue_name})` : ''}` : tr("Sede")} · ${row.location?.address || tr("Sin dirección")}${row.location?.locality ? `, ${row.location.locality}` : ''}${row.capacity ? ` · ${tr("Capacidad")}: ${row.capacity}` : ''}` : kind === 'speaker' ? (row.public_consent ? tr("Consentimiento público registrado") : tr("Sin consentimiento público")) : row.slug}</span></div><span className="revision">REV. {row.revision}</span>{extra?.(row)}{onEdit && <button className="small-button" onClick={() => onEdit(row)}>{tr("Editar")}</button>}{onArchive && <button className="small-button muted" onClick={() => onArchive(row)}>{tr("Archivar")}</button>}</div>)}</div>; }

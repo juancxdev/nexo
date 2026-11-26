@@ -13,6 +13,7 @@ import {
 
 interface SpeakersSectionProps {
   speakers: RecordData[];
+  isReader: boolean;
   request: EventsRequest;
   inspect: InspectFn;
   setDialog: OpenDialogFn;
@@ -23,6 +24,7 @@ interface SpeakersSectionProps {
 
 export function SpeakersSection({
   speakers,
+  isReader,
   request,
   inspect,
   setDialog,
@@ -51,35 +53,45 @@ export function SpeakersSection({
       <ResourceList
         rows={speakers}
         kind="speaker"
-        onEdit={(row) =>
-          setDialog({
-            title: tr("Editar ponente"),
-            description: tr(
-              "Para cambiar el consentimiento consulta primero el aviso vigente.",
-            ),
-            fields: [
-              textField("display_name", tr("Nombre")),
-              { name: "bio", label: tr("Biografía"), type: "textarea" },
-              textField("media_ref", tr("Referencia multimedia")),
-              {
-                name: "exclusive",
-                label: tr("Disponibilidad exclusiva"),
-                type: "checkbox",
-              },
-            ],
-            initial: row,
-            submit: async (body) => {
-              await run(
-                `/speakers/${row.id}`,
-                "PATCH",
-                cleanPayload(body),
-                row.revision,
-              );
-            },
-          })
+        onEdit={
+          isReader
+            ? undefined
+            : (row) =>
+                setDialog({
+                  title: tr("Editar ponente"),
+                  description: tr(
+                    "Para cambiar el consentimiento consulta primero el aviso vigente.",
+                  ),
+                  fields: [
+                    textField("display_name", tr("Nombre")),
+                    { name: "bio", label: tr("Biografía"), type: "textarea" },
+                    textField("media_ref", tr("Referencia multimedia")),
+                    {
+                      name: "exclusive",
+                      label: tr("Disponibilidad exclusiva"),
+                      type: "checkbox",
+                    },
+                  ],
+                  initial: row,
+                  submit: async (body) => {
+                    await run(
+                      `/speakers/${row.id}`,
+                      "PATCH",
+                      cleanPayload(body),
+                      row.revision,
+                    );
+                  },
+                })
         }
-        onArchive={(row) => void archiveResource(`/speakers/${row.id}`, row)}
-        extra={(row) => (
+        onArchive={
+          isReader
+            ? undefined
+            : (row) => void archiveResource(`/speakers/${row.id}`, row)
+        }
+        extra={
+          isReader
+            ? undefined
+            : (row) => (
           <button
             className="small-button"
             onClick={async () => {
@@ -116,7 +128,8 @@ export function SpeakersSection({
           >
             {tr("Consentimiento")}
           </button>
-        )}
+        )
+        }
       />
     </Panel>
   );

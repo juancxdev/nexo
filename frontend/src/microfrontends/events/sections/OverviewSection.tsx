@@ -1,7 +1,13 @@
-import { ArrowRight, CalendarDays, Clock3, MapPin, Users } from "lucide-react";
+import {
+  ArrowRight,
+  CalendarDays,
+  CheckCircle2,
+  MapPin,
+  Users,
+} from "lucide-react";
 import { translateEvents as tr } from "../../../core/events-i18n";
-import type { RecordData } from "../api";
-import { Empty, EventList, Panel, Stat, Step } from "../components";
+import { displayDate, type RecordData } from "../api";
+import { Detail, Empty, EventList, Panel, Stat } from "../components";
 import type { Section } from "./shared";
 
 interface OverviewSectionProps {
@@ -23,97 +29,47 @@ export function OverviewSection({
   onSelectEvent,
   onCreateEvent,
 }: OverviewSectionProps) {
+  const publishedCount = events.filter((e) => e.status === "published").length;
+  const draftCount = events.filter((e) => e.status === "draft").length;
+  const otherCount = events.length - publishedCount - draftCount;
+
+  const upcomingEvent = [...events]
+    .filter((e) => e.starts_at && new Date(e.starts_at).getTime() >= Date.now())
+    .sort(
+      (a, b) =>
+        new Date(a.starts_at || 0).getTime() -
+        new Date(b.starts_at || 0).getTime(),
+    )[0];
+
   return (
     <>
-      <div className="hero">
-        <div className="hero-content">
-          <div className="hero-tag">
-            <span /> {tr("ESPACIO DE TRABAJO")}
-          </div>
-          <h2>
-            {tr("Grandes ideas merecen")}
-            <br />
-            <em>{tr("grandes eventos.")}</em>
-          </h2>
-          <p>
-            {tr(
-              "De la primera idea al último detalle, reúne todo lo que necesitas en un solo lugar.",
-            )}
-          </p>
-          <button onClick={() => navigate("events")}>
-            {tr("Ver mis eventos")} <ArrowRight size={16} />
-          </button>
-        </div>
-        <div className="hero-art">
-          <div className="art-orbit orbit-one" />
-          <div className="art-orbit orbit-two" />
-          <div className="art-circle" />
-          <div className="art-card">
-            <div className="art-card-top">
-              <span />
-              <span />
-              <span />
-            </div>
-            <div className="art-calendar">
-              <i />
-              <i />
-              <i />
-              <i />
-              <i />
-              <i />
-              <i />
-              <i />
-              <i />
-              <i />
-              <i />
-              <i />
-            </div>
-            <div className="art-line" />
-            <div className="art-line short" />
-          </div>
-          <div className="art-spark">✳</div>
-          <div className="art-mini">
-            <CalendarDays size={18} />
-          </div>
-        </div>
-        <span className="hero-index">01 / 04</span>
-      </div>
-
       <div className="stats-grid">
         <Stat
           icon={<CalendarDays size={18} />}
           label={tr("Eventos")}
           value={events.length}
-          hint={tr("En esta organización")}
+          hint={tr("Registrados en total")}
           tone="peach"
         />
         <Stat
-          icon={<Clock3 size={18} />}
-          label={tr("Borradores")}
-          value={events.filter((e) => e.status === "draft").length}
-          hint={tr("Listos para trabajar")}
-          tone="lavender"
+          icon={<CheckCircle2 size={18} />}
+          label={tr("Publicados")}
+          value={publishedCount}
+          hint={tr("Activos actualmente")}
+          tone="green"
         />
         <Stat
           icon={<MapPin size={18} />}
           label={tr("Sedes y salas")}
-          value={isReader ? "—" : venuesCount}
-          hint={
-            isReader
-              ? tr("Sin acceso de escritura")
-              : tr("Espacios disponibles")
-          }
-          tone="green"
+          value={venuesCount}
+          hint={tr("Espacios disponibles")}
+          tone="lavender"
         />
         <Stat
           icon={<Users size={18} />}
           label={tr("Ponentes")}
-          value={isReader ? "—" : speakersCount}
-          hint={
-            isReader
-              ? tr("Sin acceso de escritura")
-              : tr("Perfiles registrados")
-          }
+          value={speakersCount}
+          hint={tr("Perfiles registrados")}
           tone="yellow"
         />
       </div>
@@ -121,7 +77,7 @@ export function OverviewSection({
       <div className="overview-grid">
         <Panel
           title={tr("Eventos recientes")}
-          subtitle={tr("Tus eventos más recientes, en un vistazo.")}
+          subtitle={tr("Haz clic en un evento para ver su detalle.")}
           action={
             <button className="link-button" onClick={() => navigate("events")}>
               {tr("Ver todos")} <ArrowRight size={15} />
@@ -140,7 +96,7 @@ export function OverviewSection({
             <Empty
               title={tr("Todavía no hay eventos")}
               description={tr(
-                "Tu próximo gran evento comienza con un primer paso.",
+                "Cuando existan eventos en la organización aparecerán aquí.",
               )}
               action={
                 !isReader && (
@@ -154,28 +110,37 @@ export function OverviewSection({
         </Panel>
 
         <Panel
-          title={tr("Para comenzar")}
-          subtitle={tr("Cada gran experiencia empieza aquí.")}
-          className="getting-started"
+          title={tr("Vista rápida")}
+          subtitle={tr("Estado general y accesos directos.")}
         >
-          <Step
-            number="01"
-            title={tr("Crea tu evento")}
-            detail={tr("Define el nombre, fechas y detalles.")}
-            onClick={() => navigate("events")}
-          />
-          <Step
-            number="02"
-            title={tr("Prepara los espacios")}
-            detail={tr("Añade sedes, salas y ponentes.")}
-            onClick={() => navigate("venues")}
-          />
-          <Step
-            number="03"
-            title={tr("Diseña tu agenda")}
-            detail={tr("Organiza los programas y sesiones.")}
-            onClick={() => navigate("agenda")}
-          />
+          <div className="stack">
+            <Detail
+              label={tr("Próximo evento")}
+              value={
+                upcomingEvent
+                  ? `${upcomingEvent.title} · ${displayDate(upcomingEvent.starts_at)}`
+                  : tr("Sin eventos próximos")
+              }
+            />
+            <Detail
+              label={tr("Distribución por estado")}
+              value={`${publishedCount} ${tr("publicados")} · ${draftCount} ${tr("borradores")} · ${otherCount} ${tr("cerrados/otros")}`}
+            />
+            <div className="button-row">
+              <button
+                className="button secondary compact"
+                onClick={() => navigate("agenda")}
+              >
+                {tr("Ir a agenda")} <ArrowRight size={14} />
+              </button>
+              <button
+                className="button secondary compact"
+                onClick={() => navigate("forms")}
+              >
+                {tr("Ir a formularios")} <ArrowRight size={14} />
+              </button>
+            </div>
+          </div>
         </Panel>
       </div>
     </>

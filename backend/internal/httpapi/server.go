@@ -378,6 +378,8 @@ func scopesForRole(role string) []string {
 		return []string{"onsite:checkin", "onsite:read", "onsite:void", "reports:read", "events:read", "events:write"}
 	case "staff":
 		return []string{"onsite:checkin", "onsite:read", "events:read"}
+	case "member":
+		return []string{"events:read"}
 	default:
 		return []string{"onsite:read"}
 	}
@@ -462,7 +464,7 @@ func (s *Server) sidebar(w http.ResponseWriter, r *http.Request) {
 	}
 	items := []map[string]any{{"id": "overview", "label": "Inicio", "description": "Contexto de tu organización", "route": "/", "icon": "layout-dashboard", "capabilities": []string{}}, {"id": "onsite-operations", "label": "Onsite Operations", "description": "Check-in y operación presencial", "route": "/onsite", "icon": "calendar-check-2", "capabilities": []string{"onsite:read"}}, {"id": "events", "label": "Eventos", "description": "Configuración, agenda, ponentes y formularios", "route": "/events", "icon": "calendar", "capabilities": eventCaps}}
 	if role == "member" {
-		items = items[:1]
+		items = []map[string]any{items[0], items[2]}
 	}
 	writeJSON(w, 200, map[string]any{"items": items, "role": role})
 }

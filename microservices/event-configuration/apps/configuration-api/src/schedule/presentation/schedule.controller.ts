@@ -43,7 +43,7 @@ import { ScheduleService } from '../application/schedule.service';
 @ApiTags('Schedule - EC-B')
 @ApiSecurity('DevActor')
 @UseGuards(AuthGuard)
-@RequireScopes('events:write')
+@RequireScopes('events:write', 'events:read')
 @UsePipes(new ValidationPipe({
   transform: true,
   whitelist: true,
@@ -64,6 +64,7 @@ export class ScheduleController {
   }
 
   @Post('venues')
+  @RequireScopes('events:write')
   @ApiOperation({ summary: 'Create a venue or room.' })
   @ApiHeader({ name: 'Idempotency-Key', required: true })
   @ApiResponse({ status: 201, description: 'Venue created.' })
@@ -85,6 +86,7 @@ export class ScheduleController {
   getVenue(@Claims() claims: TenantClaims, @Param('id', ParseUUIDPipe) id: string) { return this.scheduleService.getVenue(claims, id); }
 
   @Patch('venues/:id')
+  @RequireScopes('events:write')
   async updateVenue(@Claims() claims: TenantClaims, @Param('id', ParseUUIDPipe) id: string, @Headers('if-match') tag: string | undefined,
     @Body() dto: VenuePatchDto, @Req() request: Request, @Res() response: Response): Promise<void> {
     const result = await this.scheduleService.updateVenue(claims, id, this.parseIfMatch(tag), dto, this.requestMetadata(claims, request, ''));
@@ -92,6 +94,7 @@ export class ScheduleController {
   }
 
   @Delete('venues/:id')
+  @RequireScopes('events:write')
   @HttpCode(HttpStatus.NO_CONTENT)
   archiveVenue(@Claims() claims: TenantClaims, @Param('id', ParseUUIDPipe) id: string, @Headers('if-match') tag: string | undefined, @Req() request: Request) {
     return this.scheduleService.archiveVenue(claims, id, this.parseIfMatch(tag), this.requestMetadata(claims, request, ''));
@@ -110,6 +113,7 @@ export class ScheduleController {
   }
 
   @Post('events/:eventId/programs')
+  @RequireScopes('events:write')
   @ApiOperation({ summary: 'Create a program for an event.' })
   @ApiParam({ name: 'eventId', format: 'uuid' })
   @ApiHeader({ name: 'Idempotency-Key', required: true })
@@ -144,6 +148,7 @@ export class ScheduleController {
   }
 
   @Patch('events/:eventId/programs/:programId')
+  @RequireScopes('events:write')
   async updateProgram(@Claims() claims: TenantClaims, @Param('eventId', ParseUUIDPipe) eventId: string, @Param('programId', ParseUUIDPipe) programId: string,
     @Headers('if-match') tag: string | undefined, @Body() dto: ProgramPatchDto, @Req() request: Request, @Res() response: Response): Promise<void> {
     try {
@@ -153,6 +158,7 @@ export class ScheduleController {
   }
 
   @Delete('events/:eventId/programs/:programId')
+  @RequireScopes('events:write')
   @HttpCode(HttpStatus.NO_CONTENT)
   archiveProgram(@Claims() claims: TenantClaims, @Param('eventId', ParseUUIDPipe) eventId: string, @Param('programId', ParseUUIDPipe) programId: string,
     @Headers('if-match') tag: string | undefined, @Req() request: Request) {
@@ -172,6 +178,7 @@ export class ScheduleController {
   }
 
   @Post('events/:eventId/schedule-validations')
+  @RequireScopes('events:write')
   @ApiOperation({ summary: 'Preview schedule conflicts and warnings without persisting or reserving resources.' })
   @ApiParam({ name: 'eventId', format: 'uuid' })
   @ApiResponse({ status: 200, description: 'Validation result for candidate sessions.' })
@@ -184,6 +191,7 @@ export class ScheduleController {
   }
 
   @Post('events/:eventId/sessions')
+  @RequireScopes('events:write')
   @ApiOperation({ summary: 'Create a draft session; exclusive resources are not reserved yet.' })
   @ApiParam({ name: 'eventId', format: 'uuid' })
   @ApiHeader({ name: 'Idempotency-Key', required: true })
@@ -209,6 +217,7 @@ export class ScheduleController {
   }
 
   @Post('events/:eventId/sessions/:sessionId/schedules')
+  @RequireScopes('events:write')
   @ApiOperation({ summary: 'Schedule a draft session and reserve exclusive resources atomically.' })
   @ApiParam({ name: 'eventId', format: 'uuid' })
   @ApiParam({ name: 'sessionId', format: 'uuid' })
@@ -271,6 +280,7 @@ export class ScheduleController {
   }
 
   @Patch('events/:eventId/sessions/:sessionId')
+  @RequireScopes('events:write')
   @ApiOperation({ summary: 'Update session fields with optimistic concurrency control.' })
   @ApiParam({ name: 'eventId', format: 'uuid' })
   @ApiParam({ name: 'sessionId', format: 'uuid' })
@@ -304,6 +314,7 @@ export class ScheduleController {
   }
 
   @Post('events/:eventId/sessions/:sessionId/cancellations')
+  @RequireScopes('events:write')
   @ApiOperation({ summary: 'Cancel a draft or scheduled session, releasing reservations.' })
   @ApiParam({ name: 'eventId', format: 'uuid' })
   @ApiParam({ name: 'sessionId', format: 'uuid' })
@@ -348,6 +359,7 @@ export class ScheduleController {
   }
 
   @Post('events/:eventId/sessions/:sessionId/completions')
+  @RequireScopes('events:write')
   @ApiOperation({ summary: 'Complete a scheduled session, releasing reservations.' })
   @ApiParam({ name: 'eventId', format: 'uuid' })
   @ApiParam({ name: 'sessionId', format: 'uuid' })

@@ -152,8 +152,12 @@ export function VenuesSection({
         <ResourceList
           rows={parentVenues}
           kind="venue"
-          onEdit={editVenue}
-          onArchive={(row) => void archiveResource(`/venues/${row.id}`, row)}
+          onEdit={isReader ? undefined : editVenue}
+          onArchive={
+            isReader
+              ? undefined
+              : (row) => void archiveResource(`/venues/${row.id}`, row)
+          }
         />
       </Panel>
 
@@ -179,8 +183,12 @@ export function VenuesSection({
         <ResourceList
           rows={rooms}
           kind="venue"
-          onEdit={editRoom}
-          onArchive={(row) => void archiveResource(`/venues/${row.id}`, row)}
+          onEdit={isReader ? undefined : editRoom}
+          onArchive={
+            isReader
+              ? undefined
+              : (row) => void archiveResource(`/venues/${row.id}`, row)
+          }
         />
       </Panel>
     </div>

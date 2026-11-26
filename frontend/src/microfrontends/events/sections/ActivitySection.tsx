@@ -5,7 +5,6 @@ import { displayDate, items, type EventsRequest, type RecordData } from "../api"
 import { Badge, Detail, Empty, Panel } from "../components";
 import {
   textField,
-  type InspectFn,
   type OpenDialogFn,
   type RunFn,
   type ShowErrorFn,
@@ -16,7 +15,6 @@ interface ActivitySectionProps {
   selectedPath: string;
   isReader: boolean;
   request: EventsRequest;
-  inspect: InspectFn;
   setDialog: OpenDialogFn;
   run: RunFn;
   showError: ShowErrorFn;
@@ -71,7 +69,6 @@ export function ActivitySection({
   selectedPath,
   isReader,
   request,
-  inspect,
   setDialog,
   run,
   showError,
@@ -146,19 +143,23 @@ export function ActivitySection({
       },
     });
 
-  const revokeAssignment = async (row: RecordData) => {
-    try {
-      await run(
-        `${selectedPath}/assignments/${row.id}`,
-        "DELETE",
-        undefined,
-        undefined,
-        tr("Asignación revocada."),
-      );
-      await loadActivity();
-    } catch (error) {
-      showError(error);
-    }
+  const revokeAssignment = (row: RecordData) => {
+    setDialog({
+      title: tr("Confirmar revocación"),
+      description: `${tr("¿Revocar el acceso de")} ${String(row.role || "")} (${String(row.user_id || "")})? ${tr("Perderá inmediatamente los permisos otorgados por esta asignación.")}`,
+      fields: [],
+      button: tr("Confirmar revocación"),
+      submit: async () => {
+        await run(
+          `${selectedPath}/assignments/${row.id}`,
+          "DELETE",
+          undefined,
+          undefined,
+          tr("Asignación revocada."),
+        );
+        await loadActivity();
+      },
+    });
   };
 
   return (
@@ -166,34 +167,29 @@ export function ActivitySection({
       <Panel
         title={tr("Historial y auditoría")}
         subtitle={tr(
-          "Registro inmutable de revisiones y operaciones del evento (EC-041).",
+          "Registro inmutable de revisiones y operaciones del evento.",
         )}
-        action={
-          <div className="button-row">
-            {(
-              [
-                ["history", tr("Historial")],
-                ["audit", tr("Auditoría")],
-                ["revisions", tr("Revisiones")],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                className={`button ${view === id ? "primary" : "secondary"} compact`}
-                onClick={() => setView(id)}
-              >
-                {label}
-              </button>
-            ))}
-            <button
-              className="button secondary compact"
-              onClick={() => void inspect(tr("Historial"), `${selectedPath}/${view}`)}
-            >
-              {tr("Ver JSON")}
-            </button>
-          </div>
-        }
       >
+        <div className="subtabs" role="tablist" aria-label={tr("Vistas de actividad")}>
+          {(
+            [
+              ["history", tr("Historial")],
+              ["audit", tr("Auditoría")],
+              ["revisions", tr("Revisiones")],
+            ] as const
+          ).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={view === id}
+              className={`subtab ${view === id ? "is-active" : ""}`}
+              onClick={() => setView(id)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <div className="detail-grid">
           <Detail
             label={tr("Revisión actual")}

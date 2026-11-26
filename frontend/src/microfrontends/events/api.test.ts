@@ -1,5 +1,5 @@
 import {afterEach,describe,expect,it,vi} from 'vitest';
-import {createEventsTransport} from './api';
+import {ApiError, createEventsTransport} from './api';
 
 afterEach(()=>vi.unstubAllGlobals());
 describe('Configuration transport boundary',()=>{
@@ -39,5 +39,14 @@ describe('Configuration transport boundary',()=>{
     const transport=createEventsTransport({baseUrl:'http://localhost:3000',mode:'authenticated',development:true,accessToken:'',tenantId:'tenant-uuid'});
     await expect(transport.request('/events')).rejects.toThrow('pendiente');
     expect(fetch).not.toHaveBeenCalled();
+  });
+  it('parses problem details field errors into ApiError.fieldErrors',async()=>{
+    const fetch=vi.fn().mockResolvedValue({ok:false,status:422,text:async()=>JSON.stringify({detail:'Validation failed',errors:[{pointer:'/body/starts_at',message:'Must be before ends_at'},{name:'timezone',reason:'Invalid IANA timezone'}]})});
+    vi.stubGlobal('fetch',fetch);
+    const transport=createEventsTransport({baseUrl:'',mode:'demo',development:true,actor:'org-a-manager'});
+    let caught: unknown;
+    try{await transport.request('/events',{method:'POST',body:{}});}catch(e){caught=e;}
+    expect(caught).toBeInstanceOf(ApiError);
+    expect((caught as ApiError).fieldErrors).toEqual({starts_at:'Must be before ends_at',timezone:'Invalid IANA timezone'});
   });
 });

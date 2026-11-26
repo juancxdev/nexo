@@ -157,37 +157,43 @@ export function AgendaSection({
         <ResourceList
           rows={programs}
           kind="program"
-          onEdit={(row) =>
-            setDialog({
-              title: tr("Editar programa"),
-              fields: [
-                textField("name", tr("Nombre")),
-                textField("slug", tr("Identificador")),
-                {
-                  name: "display_order",
-                  label: tr("Orden"),
-                  type: "number",
-                },
-                textField("color", tr("Color (#RRGGBB)")),
-                {
-                  name: "description",
-                  label: tr("Descripción"),
-                  type: "textarea",
-                },
-              ],
-              initial: row,
-              submit: async (body) => {
-                await run(
-                  `${selectedPath}/programs/${row.id}`,
-                  "PATCH",
-                  cleanPayload(body),
-                  row.revision,
-                );
-              },
-            })
+          onEdit={
+            isReader
+              ? undefined
+              : (row) =>
+                  setDialog({
+                    title: tr("Editar programa"),
+                    fields: [
+                      textField("name", tr("Nombre")),
+                      textField("slug", tr("Identificador")),
+                      {
+                        name: "display_order",
+                        label: tr("Orden"),
+                        type: "number",
+                      },
+                      textField("color", tr("Color (#RRGGBB)")),
+                      {
+                        name: "description",
+                        label: tr("Descripción"),
+                        type: "textarea",
+                      },
+                    ],
+                    initial: row,
+                    submit: async (body) => {
+                      await run(
+                        `${selectedPath}/programs/${row.id}`,
+                        "PATCH",
+                        cleanPayload(body),
+                        row.revision,
+                      );
+                    },
+                  })
           }
-          onArchive={(row) =>
-            void archiveResource(`${selectedPath}/programs/${row.id}`, row)
+          onArchive={
+            isReader
+              ? undefined
+              : (row) =>
+                  void archiveResource(`${selectedPath}/programs/${row.id}`, row)
           }
         />
       </Panel>
