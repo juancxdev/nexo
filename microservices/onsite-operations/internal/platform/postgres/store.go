@@ -313,6 +313,54 @@ func (s *Store) Dashboard(ctx context.Context, event, tenant string) (map[string
 	}
 	return map[string]any{"registered": registered, "confirmed": confirmed, "present": present, "attendance_rate": rate}, nil
 }
+
+func (s *Store) Events(ctx context.Context, tenant string) ([]ports.Event, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT source_event_id,name,status,starts_at,ends_at,timezone,published_revision FROM onsite.events WHERE tenant_id=$1::uuid AND status IN ('draft','active','closed') ORDER BY starts_at DESC, name ASC`, tenant)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ports.Event{}
+	for rows.Next() {
+		var e ports.Event
+		if err := rows.Scan(&e.ID, &e.Name, &e.Status, &e.StartsAt, &e.EndsAt, &e.Timezone, &e.PublishedRevision); err != nil {
+			return nil, err
+		}
+		items = append(items, e)
+	}
+	return items, rows.Err()
+}
+
+func (s *Store) Roster(ctx context.Context, event, scope, tenant string) ([]ports.RosterEntry, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT r.registration_id::text,COALESCE(r.ticket_id,''),r.full_name,
+		CASE
+		  WHEN EXISTS (SELECT 1 FROM onsite.attendance_facts co WHERE co.ticket_id=r.ticket_id AND co.event_id=e.id AND co.type='check_out' AND co.occurred_at >= COALESCE(p.checked_in_at,'epoch'::timestamptz) AND NOT EXISTS (SELECT 1 FROM onsite.attendance_facts v WHERE v.type='void' AND v.compensates_fact_id=co.id)) THEN 'checked_out'
+		  WHEN p.ticket_id IS NOT NULL THEN 'present'
+		  WHEN now() >= e.ends_at THEN 'no_show'
+		  ELSE 'confirmed'
+		END,
+		p.checked_in_at,(SELECT max(co.occurred_at) FROM onsite.attendance_facts co WHERE co.ticket_id=r.ticket_id AND co.event_id=e.id AND co.type='check_out' AND co.occurred_at >= COALESCE(p.checked_in_at,'epoch'::timestamptz) AND NOT EXISTS (SELECT 1 FROM onsite.attendance_facts v WHERE v.type='void' AND v.compensates_fact_id=co.id))
+		FROM participation_contract.registrations_v1 r
+		JOIN onsite.events e ON e.tenant_id=$1::uuid AND (e.source_event_id=r.event_id OR e.participation_event_id=r.event_id) AND e.source_event_id=$2
+		LEFT JOIN onsite.scopes sc ON sc.event_id=e.id AND sc.code=$3
+		LEFT JOIN onsite.effective_attendance p ON p.event_id=e.id AND p.scope_id=sc.id AND p.ticket_id=r.ticket_id
+		WHERE r.tenant_id=$1::uuid
+		ORDER BY r.full_name`, tenant, event, scope)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ports.RosterEntry{}
+	for rows.Next() {
+		var e ports.RosterEntry
+		if err := rows.Scan(&e.RegistrationID, &e.TicketID, &e.DisplayName, &e.State, &e.CheckedInAt, &e.CheckedOutAt); err != nil {
+			return nil, err
+		}
+		items = append(items, e)
+	}
+	return items, rows.Err()
+}
 func (s *Store) Ready(ctx context.Context) error { return s.Pool.Ping(ctx) }
 func BodyHash(v any) (string, error)             { return hashBody(v) }
 

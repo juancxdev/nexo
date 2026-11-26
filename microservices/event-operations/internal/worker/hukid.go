@@ -4,12 +4,19 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"io"
 	"net/http"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"nexo-event-operations/internal/reports"
@@ -22,7 +29,32 @@ type Worker struct {
 }
 
 func New(db *pgxpool.Pool) *Worker {
-	return &Worker{DB: db, Client: &http.Client{Timeout: 8 * time.Second}}
+	return &Worker{DB: db, Client: newHTTPClient()}
+}
+
+// newHTTPClient configura TLS de producción para HukID. La autenticación mTLS
+// es opcional porque depende del entorno contratado; nunca se desactiva la
+// verificación de certificados.
+func newHTTPClient() *http.Client {
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if caPath := strings.TrimSpace(os.Getenv("HUKID_CA_CERT_FILE")); caPath != "" {
+		pem, err := os.ReadFile(filepath.Clean(caPath))
+		if err == nil {
+			pool, _ := x509.SystemCertPool()
+			if pool == nil {
+				pool = x509.NewCertPool()
+			}
+			if pool.AppendCertsFromPEM(pem) {
+				tlsConfig.RootCAs = pool
+			}
+		}
+	}
+	if certPath, keyPath := os.Getenv("HUKID_CLIENT_CERT_FILE"), os.Getenv("HUKID_CLIENT_KEY_FILE"); certPath != "" && keyPath != "" {
+		if cert, err := tls.LoadX509KeyPair(filepath.Clean(certPath), filepath.Clean(keyPath)); err == nil {
+			tlsConfig.Certificates = []tls.Certificate{cert}
+		}
+	}
+	return &http.Client{Timeout: 8 * time.Second, Transport: &http.Transport{TLSClientConfig: tlsConfig}}
 }
 func (w *Worker) Run(ctx context.Context) {
 	t := time.NewTicker(2 * time.Second)
@@ -93,7 +125,13 @@ func (w *Worker) tick(ctx context.Context) {
 		}
 		var key, state, requestID, base, oauth, certID, keyVersion string
 		var ciphertext, nonce []byte
-		if w.DB.QueryRow(ctx, `SELECT d.idempotency_key,d.state,COALESCE(d.hukid_request_id,''),c.base_url,c.oauth_url,d.certificate_id::text,d.claims_ciphertext,d.claims_nonce,d.claims_key_version FROM integration.hukid_deliveries d JOIN integration.hukid_configs c ON c.id=d.config_id WHERE d.id=$1::uuid`, id).Scan(&key, &state, &requestID, &base, &oauth, &certID, &ciphertext, &nonce, &keyVersion) == nil {
+		if w.DB.QueryRow(ctx, `SELECT d.idempotency_key,d.state,COALESCE(d.hukid_request_id,''),c.base_url,c.oauth_url,COALESCE(d.certificate_id::text,''),d.claims_ciphertext,d.claims_nonce,d.claims_key_version FROM integration.hukid_deliveries d JOIN integration.hukid_configs c ON c.id=d.config_id WHERE d.id=$1::uuid`, id).Scan(&key, &state, &requestID, &base, &oauth, &certID, &ciphertext, &nonce, &keyVersion) == nil {
+			if v := strings.TrimRight(os.Getenv("HUKID_BASE_URL"), "/"); v != "" {
+				base = v
+			}
+			if v := strings.TrimRight(os.Getenv("HUKID_OAUTH_URL"), "/"); v != "" {
+				oauth = v
+			}
 			_ = w.process(ctx, id, key, state, requestID, base, oauth, certID, ciphertext, nonce, keyVersion)
 		}
 	}
@@ -117,8 +155,16 @@ func (w *Worker) process(ctx context.Context, id, key, state, requestID, base, o
 			return w.retry(ctx, id, "network_error")
 		}
 		defer resp.Body.Close()
+		responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		if resp.StatusCode == http.StatusUnprocessableEntity || resp.StatusCode == http.StatusConflict {
-			return w.fail(ctx, id, fmt.Sprintf("hukid_%d", resp.StatusCode))
+			code := fmt.Sprintf("hukid_%d", resp.StatusCode)
+			var remote struct {
+				Code string `json:"code"`
+			}
+			if json.Unmarshal(responseBody, &remote) == nil && remote.Code != "" {
+				code += ":" + remote.Code
+			}
+			return w.fail(ctx, id, code)
 		}
 		if resp.StatusCode == http.StatusTooManyRequests {
 			return w.retryAfter(ctx, id, "hukid_429", resp.Header.Get("Retry-After"))
@@ -130,7 +176,7 @@ func (w *Worker) process(ctx context.Context, id, key, state, requestID, base, o
 			ID    string `json:"id"`
 			Offer string `json:"credentialOfferUri"`
 		}
-		if json.NewDecoder(resp.Body).Decode(&out) != nil {
+		if json.Unmarshal(responseBody, &out) != nil {
 			return w.retry(ctx, id, "invalid_response")
 		}
 		if out.ID == "" || out.Offer == "" {
@@ -183,8 +229,16 @@ func (w *Worker) process(ctx context.Context, id, key, state, requestID, base, o
 	}
 	return err
 }
-func (w *Worker) token(ctx context.Context, url string) (string, error) {
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBufferString("grant_type=client_credentials&scope=issuance:create%20issuance:read"))
+func (w *Worker) token(ctx context.Context, oauthURL string) (string, error) {
+	values := url.Values{"grant_type": {"client_credentials"}, "scope": {"issuance:create issuance:read"}}
+	if clientID, clientSecret := os.Getenv("HUKID_CLIENT_ID"), os.Getenv("HUKID_CLIENT_SECRET"); clientID != "" && clientSecret != "" {
+		// HukID Integration API usa client authentication en el formulario OAuth.
+		// No usar Basic aquí: además de coincidir con el contrato canónico,
+		// evita que los adaptadores local, sandbox y productivo diverjan.
+		values.Set("client_id", clientID)
+		values.Set("client_secret", clientSecret)
+	}
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, oauthURL, bytes.NewBufferString(values.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := w.Client.Do(req)
 	if err != nil {

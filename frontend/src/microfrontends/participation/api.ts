@@ -31,6 +31,7 @@ export type HukidCredentialDelivery = {
   state: string;
   credential_offer_uri?: string;
   credential_id?: string;
+  last_error_code?: string;
 };
 
 export type TicketResponse = {
